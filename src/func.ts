@@ -1,11 +1,13 @@
 export const parseRoleCmd = (msg: string) => {
-    const m = /^роль\s*:?\s*(.*)/i.exec(msg)
+    const m = /^роль\s*([?:])\s*(.*)/i.exec(msg)
     if (m) {
-        const role = m[1].trim()
-        if (role) {
-            return { cmd: 'set' as const, role }
-        } else {
+        const cmd = m[1].trim()
+        if (cmd === ':') {
+            return { cmd: 'set' as const, role: m[2].trim() }
+        } else if (cmd === '?') {
             return { cmd: 'get' as const }
+        } else {
+            return false
         }
     } else {
         return false

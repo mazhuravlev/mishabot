@@ -38,14 +38,17 @@ const dp = Dispatcher.for(tg);
 
 const isAllowedMsg: UpdateFilter<MessageContext> = async (msg: MessageContext): Promise<boolean> => {
     const { id, chat, sender, isMention, replyToMessage } = msg
-    if (chat.displayName === 'Мишабот' && replyToMessage) {
-        return true
-    } else if (![
-        194153091, // mazhuravlev
+    const allowedSenderId = [
         5096987735, // p-zyo
         414083657, // skyreally
         979553187, // влад
-    ].includes(sender.id)) {
+    ].includes(sender.id)
+    const allowedSenderUsername = sender.username && [
+        'mazhuravlev', 'mr_chuykin'
+    ].includes(sender.username)
+    if (chat.displayName === 'Мишабот' && replyToMessage) {
+        return true
+    } else if (!(allowedSenderId || allowedSenderUsername)) {
         return false
     }
     if (isMention || chat.chatType === 'private') {
@@ -59,7 +62,7 @@ const isAllowedMsg: UpdateFilter<MessageContext> = async (msg: MessageContext): 
 }
 
 let systemRole: string | null = localStorage.getItem('systemRole')
-let maxTokens = 200
+let maxTokens = 1000
 const addSystemRole = (messages: ChatCompletionMessageParam[])
     : ChatCompletionMessageParam[] =>
     systemRole ? [{ role: 'system', content: systemRole }, ...messages] : messages
@@ -86,7 +89,8 @@ dp.onNewMessage(
     ),
     async (upd) => {
         await upd.answerText(md`**статус** — получить статус лося
-**роль [текст роли]** — получить или установить роль, контекст будет сброшен
+**роль: [текст роли]** — установить роль, контекст будет сброшен 
+**роль?** — узнать текущую роль
 **глянь [запрос]** — задать вопрос по изображению в сообщении или в отвечаемом сообщении
 **помощь** — вывести инструкции по использованию команд`)
     })
