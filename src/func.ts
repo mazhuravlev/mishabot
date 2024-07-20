@@ -1,3 +1,5 @@
+import { UpdateFilter, MessageContext } from "@mtcute/dispatcher"
+
 export const parseRoleCmd = (msg: string) => {
     const m = /^роль\s*([?:])\s*(.*)/i.exec(msg)
     if (m) {
@@ -25,4 +27,10 @@ export function toError(e: unknown): Error {
     } catch (error) {
         return new Error()
     }
+}
+
+export const removeMention = (msg: string) => msg.trim().replace(/^\s*@\w+[\s,]*/, '').trim()
+
+export const regexFilter = (regex: RegExp): UpdateFilter<MessageContext> => async (msg: MessageContext): Promise<boolean> => {
+    return regex.test(removeMention(msg.text))
 }

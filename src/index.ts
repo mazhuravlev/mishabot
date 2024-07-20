@@ -9,13 +9,12 @@ import { LocalStorage } from 'node-localstorage'
 
 import * as env from './env.js'
 import { ChatCompletionMessageParam } from 'openai/resources/index.mjs'
-import { assertDefined, parseRoleCmd, toError } from './func.js'
+import { assertDefined, parseRoleCmd, regexFilter, removeMention, toError } from './func.js'
 
 const app = new Koa()
 app.use(serve('files', {}))
 app.listen(8080)
 const url = await ngrok.connect({ proto: 'http', addr: 8080 });
-console.log(url)
 
 const tg = new TelegramClient({
     apiId: env.API_ID,
@@ -28,7 +27,7 @@ const tg = new TelegramClient({
 })
 
 const openai = new OpenAI({
-    apiKey: process.env['OPENAI_API_KEY'],
+    apiKey: env.OPENAI_API_KEY,
     baseURL: 'https://api.vsegpt.ru/v1',
 })
 
@@ -37,40 +36,52 @@ const localStorage = new LocalStorage('localStorage')
 const dp = Dispatcher.for(tg);
 
 const isAllowedMsg: UpdateFilter<MessageContext> = async (msg: MessageContext): Promise<boolean> => {
-    const { id, chat, sender, isMention, replyToMessage } = msg
-    const allowedSenderId = [
-        5096987735, // p-zyo
-        414083657, // skyreally
-        979553187, // влад
-    ].includes(sender.id)
-    const allowedSenderUsername = sender.username && [
-        'mazhuravlev', 'mr_chuykin'
-    ].includes(sender.username)
+    const { chat, isMention, replyToMessage } = msg
+
     if (chat.displayName === 'Мишабот' && replyToMessage) {
         return true
-    } else if (!(allowedSenderId || allowedSenderUsername)) {
-        return false
-    }
-    if (isMention || chat.chatType === 'private') {
+    } else if (isMention || chat.chatType === 'private') {
         return true
     } else if (replyToMessage?.id) {
         const originalMessage = assertDefined((await tg.getMessages(chat.id, [replyToMessage.id]))[0])
-        return originalMessage.sender.username === 'mazhuravlev2'
+        return originalMessage.sender.username === await tg.getMyUsername()
     } else {
         return false
     }
 }
 
-let systemRole: string | null = localStorage.getItem('systemRole')
-let maxTokens = 1000
-const addSystemRole = (messages: ChatCompletionMessageParam[])
-    : ChatCompletionMessageParam[] =>
-    systemRole ? [{ role: 'system', content: systemRole }, ...messages] : messages
-let chatLog: ChatCompletionMessageParam[] = []
-const resetChatLog = () => chatLog = addSystemRole([])
-resetChatLog()
+const maxTokens = 1000
+let usageTotalTokens = 0
 
-const removeMention = (msg: string) => msg.trim().replace(/^\s*@\w+[\s,]*/, '').trim()
+let chatLog = ((): ChatCompletionMessageParam[] => {
+    const savedSystemRole: string | null = localStorage.getItem('systemRole')
+    const addSystemRole = (messages: ChatCompletionMessageParam[])
+        : ChatCompletionMessageParam[] =>
+        savedSystemRole ? [{ role: 'system', content: savedSystemRole }, ...messages] : messages
+    const savedChatLog = localStorage.getItem('chatLog')
+    return savedChatLog ? JSON.parse(savedChatLog) : addSystemRole([])
+})()
+
+const resetChatLog = () => chatLog = chatLog.filter(x => x.role === 'system')
+
+const setSystemRole = (role: string) => {
+    localStorage.setItem('systemRole', role)
+    chatLog = [
+        { role: 'system', content: role },
+        ...chatLog.filter(x => x.role !== 'system')
+    ]
+    saveChatLog()
+}
+
+const getSystemRole = () => {
+    const x = chatLog.find(x => x.role === 'system')
+    return x ? x.content : undefined
+}
+
+const pushChatLog = (msg: ChatCompletionMessageParam[]) => {
+    msg.forEach(x => chatLog.push(x))
+    saveChatLog()
+}
 
 dp.onMessageGroup(
     isAllowedMsg,
@@ -78,19 +89,17 @@ dp.onMessageGroup(
         await upd.replyText('Ого, вот это да!')
     })
 
-const regexFilter = (regex: RegExp): UpdateFilter<MessageContext> => async (msg: MessageContext): Promise<boolean> => {
-    return regex.test(removeMention(msg.text))
-}
-
 dp.onNewMessage(
     filters.and(
-        regexFilter(/^(помощь|хелб)/i),
+        regexFilter(/^(помощь)/i),
         isAllowedMsg,
     ),
     async (upd) => {
         await upd.answerText(md`**статус** — получить статус лося
-**роль: [текст роли]** — установить роль, контекст будет сброшен 
-**роль?** — узнать текущую роль
+**сброс** — сбросить лог
+**выжимка[!]** — выжимка, с ! замена лога на выжимку
+**роль: [текст роли]** — установить системную роль
+**роль?** — узнать текущую системную роль
 **глянь [запрос]** — задать вопрос по изображению в сообщении или в отвечаемом сообщении
 **помощь** — вывести инструкции по использованию команд`)
     })
@@ -118,8 +127,20 @@ dp.onNewMessage(
             console.error(e)
         }
         upd.answerText(md`**размер лога** = ${chatLog.length} 
+**total_tokens** = ${usageTotalTokens} 
 **max_tokens** = ${maxTokens} 
 **credits** = ${credits}`)
+    }
+)
+
+dp.onNewMessage(
+    filters.and(
+        regexFilter(/^сброс/i),
+        isAllowedMsg,
+    ),
+    async (upd) => {
+        resetChatLog()
+        await upd.answerText('Лог чата сброшен')
     }
 )
 
@@ -131,22 +152,20 @@ dp.onNewMessage(
     async (upd) => {
         const prompt = removeMention(upd.text)
         const cmd = parseRoleCmd(prompt)
+        const systemRole = getSystemRole()
         const answerRole = () => upd.replyText(systemRole ? `Роль: ${systemRole}` : 'Нету')
         if (!cmd) {
-            console.log(`обишба рль [ ${upd.sender.displayName}] ${prompt}`)
+            console.error(`role [ ${upd.sender.displayName}] ${prompt}`)
             return
         }
 
         if (cmd.cmd === 'set') {
-            systemRole = cmd.role
-            localStorage.setItem('systemRole', systemRole)
-            resetChatLog()
+            setSystemRole(cmd.role)
             await answerRole()
         } else {
             await answerRole()
         }
     })
-
 
 const imgRegexp = /глянь\s*,?\s*/i
 dp.onNewMessage(
@@ -156,6 +175,10 @@ dp.onNewMessage(
         (msg: MessageContext) => removeMention(msg.text).toLowerCase().startsWith('глянь'),
     ),
     async (upd: MessageContext) => {
+        if (!env.IMAGE_RECOGNITION) {
+            upd.replyText('Нет')
+            return
+        }
         const prompt = removeMention(upd.text).replace(imgRegexp, '')
         const photo = await (async (msg: MessageContext) => {
             if (upd.replyToMessage?.id) {
@@ -205,26 +228,45 @@ dp.onNewMessage(
     })
 
 dp.onNewMessage(
+    filters.and(
+        regexFilter(/^выжимка/i),
+        isAllowedMsg,
+    ),
+    async (upd) => {
+        const waitMessage = await upd.replyText('Щас сделаю выжимку из нашей беседы 🤝')
+        await tg.sendTyping(upd.chat.id, 'typing')
+        const updateMessage = (text: string) => tg.editMessage({ chatId: waitMessage.chat.id, message: waitMessage.id, text })
+        const answer = await queryGpt('Сделай выжимку из нашей беседы')
+        const { content } = answer.choices[0].message
+        if (answer && content) {
+            await updateMessage(content)
+            if (/^выжимка!/i.test(upd.text)) {
+                resetChatLog()
+                pushChatLog([{ role: 'assistant', content }])
+            }
+        } else {
+            await updateMessage('Не получилось 😢')
+        }
+    }
+)
+
+dp.onNewMessage(
     isAllowedMsg,
     async (upd) => {
         const prompt = removeMention(upd.text)
-        const params: OpenAI.Chat.ChatCompletionCreateParams = {
-            messages: [
-                ...chatLog,
-                { role: 'user', content: prompt }
-            ],
-            model: 'openai/gpt-3.5-turbo-0125',
-            n: 1,
-            max_tokens: maxTokens
-        };
         await tg.sendTyping(upd.chat.id, 'typing')
-        console.log(`Генерируем ответ: ${prompt}`)
-        const chatCompletion: OpenAI.Chat.ChatCompletion = await openai.chat.completions.create(params);
-        const answer = chatCompletion.choices[0].message.content
-        if (answer) {
-            chatLog.push({ role: 'user', content: prompt })
-            chatLog.push({ role: 'assistant', content: answer })
-            await upd.replyText(answer)
+        const answer = await queryGpt(prompt)
+        const message = answer.choices[0].message
+        if (answer && message.content) {
+            pushChatLog([
+                { role: 'user', content: prompt },
+                { role: 'assistant', content: message.content }
+            ])
+            await upd.replyText(message.content)
+            if (answer.usage?.total_tokens) {
+                usageTotalTokens = answer.usage.total_tokens
+                console.log(`[usage]: ${answer.usage.total_tokens}`)
+            }
         } else {
             await upd.replyText('Не получилось 😢')
         }
@@ -235,6 +277,28 @@ tg.run({
     code: () => tg.input('Code > '),
     password: () => tg.input('Password > ')
 }, async (self) => {
-    console.log(`Logged in as ${self.displayName}`)
-    console.log(`Роль: ${systemRole}`)
+    console.log(`Logged in as ${self.displayName}
+Роль: ${getSystemRole()}
+Username: ${await tg.getMyUsername()}
+Размер лога: ${chatLog.length}`)
+
 })
+
+function saveChatLog() {
+    localStorage.setItem('chatLog', JSON.stringify(chatLog))
+}
+
+async function queryGpt(prompt: string) {
+    const params: OpenAI.Chat.ChatCompletionCreateParams = {
+        messages: [
+            ...chatLog,
+            { role: 'user', content: prompt }
+        ],
+        model: 'openai/gpt-4o-mini',
+        n: 1,
+        max_tokens: maxTokens
+    }
+    const chatCompletion: OpenAI.Chat.ChatCompletion = await openai.chat.completions.create(params)
+    return chatCompletion
+}
+
