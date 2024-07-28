@@ -1,5 +1,5 @@
 import { Dispatcher, MessageContext, UpdateFilter, filters } from '@mtcute/dispatcher'
-import { Photo, TelegramClient, md } from '@mtcute/node'
+import { InputMedia, InputMediaLike, Message, Photo, TelegramClient, md } from '@mtcute/node'
 import OpenAI from 'openai'
 import * as ngrok from 'ngrok'
 import Koa from 'koa'
@@ -9,7 +9,8 @@ import { LocalStorage } from 'node-localstorage'
 
 import * as env from './env.js'
 import { ChatCompletionMessageParam } from 'openai/resources/index.mjs'
-import { assertDefined, parseRoleCmd, regexFilter, removeMention, toError } from './func.js'
+import { assertDefined, first, parseRoleCmd, regexFilter, removeMention, toError } from './func.js'
+import { YandexGpt } from './yandex.js'
 
 const app = new Koa()
 app.use(serve('files', {}))
@@ -25,6 +26,20 @@ const tg = new TelegramClient({
         messageGroupingInterval: 250,
     },
 })
+export const makeUpdateMessage = (msg: Message) => (text: string, media?: InputMediaLike) => tg.editMessage({ chatId: msg.chat.id, message: msg.id, text })
+
+const yandexGptPool = new Map<number, YandexGpt>()
+const getYandexGpt = (id: number) => {
+    const yandexGpt = yandexGptPool.get(id)
+    if (yandexGpt) {
+        return yandexGpt
+    } else {
+        const newYandexGpt = new YandexGpt(id, env.YANDEX_FOLDER_ID, env.YANDEX_IAM_TOKEN, 'yandexgpt')
+        yandexGptPool.set(id, newYandexGpt)
+        console.log(`Add new YandexGPT '${newYandexGpt.model}' for chat id ${id}`)
+        return newYandexGpt
+    }
+}
 
 const openai = new OpenAI({
     apiKey: env.OPENAI_API_KEY,
@@ -37,10 +52,8 @@ const dp = Dispatcher.for(tg);
 
 const isAllowedMsg: UpdateFilter<MessageContext> = async (msg: MessageContext): Promise<boolean> => {
     const { chat, isMention, replyToMessage } = msg
-
-    if (chat.displayName === 'Мишабот' && replyToMessage) {
-        return true
-    } else if (isMention || chat.chatType === 'private') {
+    if (msg.sender.username?.includes('_bot')) return false
+    if (isMention || chat.chatType === 'private') {
         return true
     } else if (replyToMessage?.id) {
         const originalMessage = assertDefined((await tg.getMessages(chat.id, [replyToMessage.id]))[0])
@@ -95,7 +108,7 @@ dp.onNewMessage(
         isAllowedMsg,
     ),
     async (upd) => {
-        await upd.answerText(md`**статус** — получить статус лося
+        await upd.replyText(md`**статус** — получить статус лося
 **сброс** — сбросить лог
 **выжимка[!]** — выжимка, с ! замена лога на выжимку
 **роль: [текст роли]** — установить системную роль
@@ -126,8 +139,10 @@ dp.onNewMessage(
         } catch (e) {
             console.error(e)
         }
-        upd.answerText(md`**размер лога** = ${chatLog.length} 
+        const apxTotalTokens = chatLog.reduce((a, c) => (c.content?.length ?? 0) + a, 0) * 0.75
+        upd.replyText(md`**размер лога** = ${chatLog.length} 
 **total_tokens** = ${usageTotalTokens} 
+**apx_total_tokens** = ${apxTotalTokens} 
 **max_tokens** = ${maxTokens} 
 **credits** = ${credits}`)
     }
@@ -140,7 +155,7 @@ dp.onNewMessage(
     ),
     async (upd) => {
         resetChatLog()
-        await upd.answerText('Лог чата сброшен')
+        await upd.replyText('Лог чата сброшен')
     }
 )
 
@@ -207,7 +222,7 @@ dp.onNewMessage(
                 n: 1,
                 max_tokens: 1000,
             };
-            const updateMessage = (text: string) => tg.editMessage({ chatId: waitMessage.chat.id, message: waitMessage.id, text })
+            const updateMessage = makeUpdateMessage(waitMessage)
             try {
                 const chatCompletion: OpenAI.Chat.ChatCompletion = await openai.chat.completions.create(params);
                 const answer = chatCompletion.choices[0].message.content
@@ -235,7 +250,7 @@ dp.onNewMessage(
     async (upd) => {
         const waitMessage = await upd.replyText('Щас сделаю выжимку из нашей беседы 🤝')
         await tg.sendTyping(upd.chat.id, 'typing')
-        const updateMessage = (text: string) => tg.editMessage({ chatId: waitMessage.chat.id, message: waitMessage.id, text })
+        const updateMessage = makeUpdateMessage(waitMessage)
         const answer = await queryGpt('Сделай выжимку из нашей беседы')
         const { content } = answer.choices[0].message
         if (answer && content) {
@@ -250,11 +265,46 @@ dp.onNewMessage(
     }
 )
 
+const drawRegex = /^нарисуй/i
+dp.onNewMessage(
+    filters.and(
+        regexFilter(drawRegex),
+        isAllowedMsg,
+    ),
+    async (upd) => {
+        const aspectRegex = /\s(\d+)\/(\d+)/
+        const aspectMatch = aspectRegex.exec(upd.text)
+        const prompt = removeMention(upd.text).replace(drawRegex, '').replace(aspectRegex, '')
+        const waitMessage = await upd.replyText('Щас нарисую 🤝')
+        const updateMessage = makeUpdateMessage(waitMessage)
+        await tg.sendTyping(upd.chat.id, 'typing')
+        const yGpt = getYandexGpt(upd.chat.id)
+        const img = await yGpt.image(
+            prompt,
+            aspectMatch?.[1] ?? '1',
+            aspectMatch?.[2] ?? '1'
+        )
+        img.subscribe(async (o) => {
+            if (o.done) {
+                await tg.deleteMessages([waitMessage])
+                await upd.replyMedia(InputMedia.photo(Buffer.from(assertDefined(o.image), 'base64'), { caption: upd.text, fileMime: 'image/jpeg' }))
+            } else {
+                updateMessage(`Рисую ${o.i}`)
+            }
+        })
+    }
+)
+
 dp.onNewMessage(
     isAllowedMsg,
     async (upd) => {
         const prompt = removeMention(upd.text)
         await tg.sendTyping(upd.chat.id, 'typing')
+
+        if (upd.replyToMessage?.id) {
+            const originalMessage = assertDefined((await tg.getMessages(upd.chat.id, [upd.replyToMessage.id]))[0])
+            pushChatLog([{ role: 'user', content: originalMessage.text }])
+        }
         const answer = await queryGpt(prompt)
         const message = answer.choices[0].message
         if (answer && message.content) {

@@ -21,6 +21,11 @@ export const assertDefined = <T>(x: T | undefined | null): T => {
     throw 'assertDefined'
 }
 
+export const first = <T>(list: T[]): T => {
+    if (list.length > 0) return list[0]
+    throw 'first: empty list'
+}
+
 export function toError(e: unknown): Error {
     try {
         return e instanceof Error ? e : new Error(String(e))
