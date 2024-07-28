@@ -1,16 +1,18 @@
 import { Dispatcher, MessageContext, UpdateFilter, filters } from '@mtcute/dispatcher'
 import { InputMedia, InputMediaLike, Message, Photo, TelegramClient, md } from '@mtcute/node'
-import OpenAI from 'openai'
 import * as ngrok from 'ngrok'
 import Koa from 'koa'
 import serve from 'koa-static'
-import sharp from 'sharp'
 import { LocalStorage } from 'node-localstorage'
-
 import * as env from './env.js'
-import { ChatCompletionMessageParam } from 'openai/resources/index.mjs'
-import { assertDefined, first, parseRoleCmd, regexFilter, removeMention, toError } from './func.js'
+import sharp from 'sharp'
+import { assertDefined, first, getChatTopicId, parseRoleCmd, regexFilter, removeMention } from './func.js'
 import { YandexGpt } from './yandex.js'
+import { ChatGpt } from './chatGpt.js'
+import { Logger, ILogObj } from "tslog"
+import OpenAI from 'openai'
+
+const log: Logger<ILogObj> = new Logger()
 
 const app = new Koa()
 app.use(serve('files', {}))
@@ -26,29 +28,38 @@ const tg = new TelegramClient({
         messageGroupingInterval: 250,
     },
 })
+const dp = Dispatcher.for(tg)
 export const makeUpdateMessage = (msg: Message) => (text: string, media?: InputMediaLike) => tg.editMessage({ chatId: msg.chat.id, message: msg.id, text })
 
-const yandexGptPool = new Map<number, YandexGpt>()
-const getYandexGpt = (id: number) => {
+const yandexGptPool = new Map<string, YandexGpt>()
+const getYandexGpt = (msg: MessageContext) => {
+    const id = getChatTopicId(msg)
     const yandexGpt = yandexGptPool.get(id)
     if (yandexGpt) {
         return yandexGpt
     } else {
         const newYandexGpt = new YandexGpt(id, env.YANDEX_FOLDER_ID, env.YANDEX_IAM_TOKEN, 'yandexgpt')
         yandexGptPool.set(id, newYandexGpt)
-        console.log(`Add new YandexGPT '${newYandexGpt.model}' for chat id ${id}`)
+        log.info(`Add new YandexGPT '${newYandexGpt.model}' for chat id ${id}`)
         return newYandexGpt
     }
 }
 
-const openai = new OpenAI({
-    apiKey: env.OPENAI_API_KEY,
-    baseURL: 'https://api.vsegpt.ru/v1',
-})
+const gptPool = new Map<string, ChatGpt>()
+const getChatGpt = async (msg: MessageContext) => {
+    const id = getChatTopicId(msg)
+    const chatGpt = gptPool.get(id)
+    if (chatGpt) {
+        return chatGpt
+    } else {
+        const newChatGpt = new ChatGpt(id, env.OPENAI_API_KEY)
+        gptPool.set(id, newChatGpt)
+        log.info(`Add new ChatGpt for chat id ${id}`)
+        return newChatGpt
+    }
+}
 
 const localStorage = new LocalStorage('localStorage')
-
-const dp = Dispatcher.for(tg);
 
 const isAllowedMsg: UpdateFilter<MessageContext> = async (msg: MessageContext): Promise<boolean> => {
     const { chat, isMention, replyToMessage } = msg
@@ -61,39 +72,6 @@ const isAllowedMsg: UpdateFilter<MessageContext> = async (msg: MessageContext): 
     } else {
         return false
     }
-}
-
-const maxTokens = 1000
-let usageTotalTokens = 0
-
-let chatLog = ((): ChatCompletionMessageParam[] => {
-    const savedSystemRole: string | null = localStorage.getItem('systemRole')
-    const addSystemRole = (messages: ChatCompletionMessageParam[])
-        : ChatCompletionMessageParam[] =>
-        savedSystemRole ? [{ role: 'system', content: savedSystemRole }, ...messages] : messages
-    const savedChatLog = localStorage.getItem('chatLog')
-    return savedChatLog ? JSON.parse(savedChatLog) : addSystemRole([])
-})()
-
-const resetChatLog = () => chatLog = chatLog.filter(x => x.role === 'system')
-
-const setSystemRole = (role: string) => {
-    localStorage.setItem('systemRole', role)
-    chatLog = [
-        { role: 'system', content: role },
-        ...chatLog.filter(x => x.role !== 'system')
-    ]
-    saveChatLog()
-}
-
-const getSystemRole = () => {
-    const x = chatLog.find(x => x.role === 'system')
-    return x ? x.content : undefined
-}
-
-const pushChatLog = (msg: ChatCompletionMessageParam[]) => {
-    msg.forEach(x => chatLog.push(x))
-    saveChatLog()
 }
 
 dp.onMessageGroup(
@@ -109,7 +87,6 @@ dp.onNewMessage(
     ),
     async (upd) => {
         await upd.replyText(md`**статус** — получить статус лося
-**сброс** — сбросить лог
 **выжимка[!]** — выжимка, с ! замена лога на выжимку
 **роль: [текст роли]** — установить системную роль
 **роль?** — узнать текущую системную роль
@@ -123,6 +100,7 @@ dp.onNewMessage(
         isAllowedMsg,
     ),
     async (upd) => {
+        const gpt = await getChatGpt(upd)
         let credits = '-'
         try {
             const res = await fetch(
@@ -139,23 +117,10 @@ dp.onNewMessage(
         } catch (e) {
             console.error(e)
         }
-        const apxTotalTokens = chatLog.reduce((a, c) => (c.content?.length ?? 0) + a, 0) * 0.75
-        upd.replyText(md`**размер лога** = ${chatLog.length} 
-**total_tokens** = ${usageTotalTokens} 
-**apx_total_tokens** = ${apxTotalTokens} 
-**max_tokens** = ${maxTokens} 
+        upd.replyText(md`Для чата **${getChatTopicId(upd)}** (${upd.chat.displayName})
+**размер лога** = ${gpt.logSize} 
+**total_tokens** = ${gpt.usage?.total_tokens} 
 **credits** = ${credits}`)
-    }
-)
-
-dp.onNewMessage(
-    filters.and(
-        regexFilter(/^сброс/i),
-        isAllowedMsg,
-    ),
-    async (upd) => {
-        resetChatLog()
-        await upd.replyText('Лог чата сброшен')
     }
 )
 
@@ -167,15 +132,15 @@ dp.onNewMessage(
     async (upd) => {
         const prompt = removeMention(upd.text)
         const cmd = parseRoleCmd(prompt)
-        const systemRole = getSystemRole()
+        const gpt = await getChatGpt(upd)
+        const systemRole = gpt.role
         const answerRole = () => upd.replyText(systemRole ? `Роль: ${systemRole}` : 'Нету')
         if (!cmd) {
             console.error(`role [ ${upd.sender.displayName}] ${prompt}`)
             return
         }
-
         if (cmd.cmd === 'set') {
-            setSystemRole(cmd.role)
+            gpt.role = cmd.role
             await answerRole()
         } else {
             await answerRole()
@@ -205,38 +170,15 @@ dp.onNewMessage(
         })(upd)
         if (photo) {
             const filename = photo.fileId + '.jpg'
-            console.log(`working: ${filename}`)
+            log.info(`working: ${filename}`)
             const waitMessage = await upd.replyText('Щас гляну 🤝')
             const imgPath = (f: string) => `files/${f}`
             await tg.downloadToFile(imgPath(filename), photo)
             await sharp(imgPath(filename)).resize(200, 200).toFile(imgPath(`200_${filename}`))
-            const params: OpenAI.Chat.ChatCompletionCreateParams = {
-                messages: [{
-                    ...chatLog,
-                    role: 'user', content: [
-                        { type: 'text', text: prompt },
-                        { type: 'image_url', image_url: { url: `${url}/200_${filename}` } }
-                    ]
-                }],
-                model: 'vis-openai/gpt-4-turbo',
-                n: 1,
-                max_tokens: 1000,
-            };
             const updateMessage = makeUpdateMessage(waitMessage)
-            try {
-                const chatCompletion: OpenAI.Chat.ChatCompletion = await openai.chat.completions.create(params);
-                const answer = chatCompletion.choices[0].message.content
-                if (answer) {
-                    await updateMessage(answer)
-                    chatLog.push({ role: 'user', content: prompt })
-                    chatLog.push({ role: 'assistant', content: answer })
-                } else {
-                    await updateMessage('Не получилось, нет ответа 😢')
-                }
-            } catch (e) {
-                console.log(e)
-                await updateMessage(`Не получилось: ${toError(e).message}`)
-            }
+            const gpt = await getChatGpt(upd)
+            const imageResponse = await gpt.lookAtImage(prompt, `${url}/200_${filename}`)
+            await updateMessage(first(imageResponse.choices).message.content ?? 'Не получилось 😢')
         } else {
             await upd.replyText(`Шо глянь ${Math.random() > 0.5 ? '🧐' : '🤔'}?`)
         }
@@ -248,20 +190,12 @@ dp.onNewMessage(
         isAllowedMsg,
     ),
     async (upd) => {
+        const gpt = await getChatGpt(upd)
         const waitMessage = await upd.replyText('Щас сделаю выжимку из нашей беседы 🤝')
         await tg.sendTyping(upd.chat.id, 'typing')
         const updateMessage = makeUpdateMessage(waitMessage)
-        const answer = await queryGpt('Сделай выжимку из нашей беседы')
-        const { content } = answer.choices[0].message
-        if (answer && content) {
-            await updateMessage(content)
-            if (/^выжимка!/i.test(upd.text)) {
-                resetChatLog()
-                pushChatLog([{ role: 'assistant', content }])
-            }
-        } else {
-            await updateMessage('Не получилось 😢')
-        }
+        const answer = await gpt.exerpt(/^выжимка!/i.test(upd.text))
+        await updateMessage(first(answer.choices).message.content ?? 'Не получилось 😢')
     }
 )
 
@@ -278,19 +212,28 @@ dp.onNewMessage(
         const waitMessage = await upd.replyText('Щас нарисую 🤝')
         const updateMessage = makeUpdateMessage(waitMessage)
         await tg.sendTyping(upd.chat.id, 'typing')
-        const yGpt = getYandexGpt(upd.chat.id)
+        const yGpt = getYandexGpt(upd)
         const img = await yGpt.image(
             prompt,
             aspectMatch?.[1] ?? '1',
             aspectMatch?.[2] ?? '1'
         )
-        img.subscribe(async (o) => {
-            if (o.done) {
-                await tg.deleteMessages([waitMessage])
-                await upd.replyMedia(InputMedia.photo(Buffer.from(assertDefined(o.image), 'base64'), { caption: upd.text, fileMime: 'image/jpeg' }))
-            } else {
-                updateMessage(`Рисую ${o.i}`)
-            }
+        img.subscribe({
+            next: async (o) => {
+                if (o.done) {
+                    await tg.deleteMessages([waitMessage])
+                    await upd.replyMedia(InputMedia.photo(Buffer.from(assertDefined(o.image), 'base64'), { caption: upd.text, fileMime: 'image/jpeg' }))
+                } else {
+                    updateMessage(`Рисую ${o.i}`)
+                }
+            },
+            error: async (e) => {
+                if (typeof e === 'string') {
+                    updateMessage(`Не получилось, ошибка 😭: ${e}`)
+                } else {
+                    updateMessage(`Не получилось, совсем неожиданная ошибка 😭`)
+                }
+            },
         })
     }
 )
@@ -300,22 +243,21 @@ dp.onNewMessage(
     async (upd) => {
         const prompt = removeMention(upd.text)
         await tg.sendTyping(upd.chat.id, 'typing')
-
+        const gpt = await getChatGpt(upd)
         if (upd.replyToMessage?.id) {
             const originalMessage = assertDefined((await tg.getMessages(upd.chat.id, [upd.replyToMessage.id]))[0])
-            pushChatLog([{ role: 'user', content: originalMessage.text }])
+            if (originalMessage.sender.username !== await tg.getMyUsername()) {
+                gpt.pushContext({ role: 'user', content: originalMessage.text })
+            }
         }
-        const answer = await queryGpt(prompt)
+        const answer = await gpt.query(prompt)
         const message = answer.choices[0].message
         if (answer && message.content) {
-            pushChatLog([
-                { role: 'user', content: prompt },
-                { role: 'assistant', content: message.content }
-            ])
+            gpt.pushContext({ role: 'user', content: prompt })
+            gpt.pushContext({ role: 'assistant', content: message.content })
             await upd.replyText(message.content)
-            if (answer.usage?.total_tokens) {
-                usageTotalTokens = answer.usage.total_tokens
-                console.log(`[usage]: ${answer.usage.total_tokens}`)
+            if (gpt.usage) {
+                log.debug(`[usage gpt ${gpt.id}]: ${gpt.usage.total_tokens}`)
             }
         } else {
             await upd.replyText('Не получилось 😢')
@@ -328,27 +270,7 @@ tg.run({
     password: () => tg.input('Password > ')
 }, async (self) => {
     console.log(`Logged in as ${self.displayName}
-Роль: ${getSystemRole()}
-Username: ${await tg.getMyUsername()}
-Размер лога: ${chatLog.length}`)
+Username: ${await tg.getMyUsername()}`)
 
 })
-
-function saveChatLog() {
-    localStorage.setItem('chatLog', JSON.stringify(chatLog))
-}
-
-async function queryGpt(prompt: string) {
-    const params: OpenAI.Chat.ChatCompletionCreateParams = {
-        messages: [
-            ...chatLog,
-            { role: 'user', content: prompt }
-        ],
-        model: 'openai/gpt-4o-mini',
-        n: 1,
-        max_tokens: maxTokens
-    }
-    const chatCompletion: OpenAI.Chat.ChatCompletion = await openai.chat.completions.create(params)
-    return chatCompletion
-}
 

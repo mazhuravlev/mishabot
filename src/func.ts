@@ -39,3 +39,17 @@ export const removeMention = (msg: string) => msg.trim().replace(/^\s*@\w+[\s,]*
 export const regexFilter = (regex: RegExp): UpdateFilter<MessageContext> => async (msg: MessageContext): Promise<boolean> => {
     return regex.test(removeMention(msg.text))
 }
+
+const getTopicId = (msg: MessageContext): number | undefined => {
+    if (msg.raw._ !== 'message') return
+    const { replyTo } = msg.raw
+    if (replyTo && replyTo._ === 'messageReplyHeader' && replyTo.forumTopic) {
+        return replyTo.replyToTopId ?? replyTo.replyToMsgId
+    }
+}
+
+export const getChatTopicId = (msg: MessageContext): string => {
+    const chatId = msg.chat.id
+    const topicId = getTopicId(msg)
+    return topicId ? `${chatId}_${topicId}` : chatId.toFixed()
+}

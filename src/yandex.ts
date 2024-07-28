@@ -1,5 +1,8 @@
-import { Observable } from "rxjs"
+import { Observable, throwError } from "rxjs"
 import { first } from "./func.js"
+import * as t from 'io-ts'
+import { pipe } from "fp-ts/lib/function.js"
+import { fold } from "fp-ts/lib/Either.js"
 
 export class YandexGpt {
     private _temperature = 0.5
@@ -9,10 +12,10 @@ export class YandexGpt {
     private _chatLog: Message[] = []
 
     constructor(
-        private _id: number,
+        private _id: string,
         private _folderId: string,
         private _iamToken: string,
-        private _model: 'yandexgpt' | 'yandexgpt-lite'
+        private _model: 'yandexgpt' | 'yandexgpt-lite',
     ) {
     }
 
@@ -56,10 +59,11 @@ export class YandexGpt {
             'Content-Type': 'application/json',
             'x-folder-id': this._folderId,
             'Authorization': `Bearer ${this._iamToken}`,
+            'Accept-Language': 'en-US,en;q=0.9,ru;q=1',
         }
     }
 
-    public async image(prompt: string, widthRatio: string, heightRatio: string): Promise<Observable<{ done: false, i: number } | { done: true, image?: string }>> {
+    public async image(prompt: string, widthRatio: string, heightRatio: string): Promise<Observable<ImageReturn>> {
         const query = {
             modelUri: `art://${this._folderId}/yandex-art/latest`,
             generationOptions: {
@@ -81,21 +85,36 @@ export class YandexGpt {
             headers: this.yandexHeaders(),
             body: JSON.stringify(query)
         })
-        const json = await response.json() as ImageResponse
-        return new Observable(observer => {
-            let i = 1
-            const interval = setInterval(async () => {
-                const res: ImageGenerationResponse = await fetch(`https://llm.api.cloud.yandex.net:443/operations/${json.id}`,
-                    { headers: this.yandexHeaders() }).then(x => x.json())
-                if (res.done) {
-                    clearInterval(interval)
-                    observer.next({ done: true, image: res.response.image })
-                    observer.complete()
-                } else {
-                    observer.next({ done: false, i: i++ })
-                }
-            }, 5000)
-        })
+        const imageResponseValidation = imageResponse.decode(await response.json())
+        return pipe(imageResponseValidation, fold(e => {
+            return throwError(() => e)
+        }, imageResponse => {
+            if ('error' in imageResponse) {
+                return throwError(() => imageResponse.message)
+            }
+            return new Observable<ImageReturn>(observer => {
+                let i = 1
+                const interval = setInterval(async () => {
+                    const response = await fetch(`https://llm.api.cloud.yandex.net:443/operations/${imageResponse.id}`,
+                        { headers: this.yandexHeaders() }).then(x => x.json())
+                    const responseValidation = imageGenerationResponse.decode(response)
+                    pipe(responseValidation, fold(
+                        e => {
+                            clearInterval(interval)
+                            console.error(e)
+                            observer.error('неожиданная ошибка')
+                        },
+                        res => {
+                            if (res.done) {
+                                observer.next({ done: true, image: res.response.image })
+                                observer.complete()
+                            } else {
+                                observer.next({ done: false, i: i++ })
+                            }
+                        }))
+                }, 3000)
+            })
+        }))
     }
 }
 
@@ -137,27 +156,31 @@ export interface CompletionOptions {
     maxTokens: string;
 }
 
-interface ImageResponse {
-    id: string;
-    description: string;
-    createdAt: null;
-    createdBy: string;
-    modifiedAt: null;
-    done: boolean;
-    metadata: null;
-}
+const imageResponse = t.union([
+    t.type({
+        id: t.string,
+    }),
+    t.type({
+        error: t.string,
+        code: t.number,
+        message: t.string,
+    }),
+])
 
-interface ImageGenerationResponse {
-    id: string;
-    description: string;
-    createdAt: null;
-    createdBy: string;
-    modifiedAt: null;
-    done: boolean;
-    metadata: null;
-    response: {
-        "@type": string;
-        image: string;
-        modelVersion: string;
-    };
-}
+type ImageResponse = t.TypeOf<typeof imageResponse>
+
+const imageGenerationResponse = t.union([
+    t.type({
+        done: t.literal(false),
+    }),
+    t.type({
+        done: t.literal(true),
+        response: t.type({
+            image: t.string,
+        }),
+    }),
+])
+
+type ImageGenerationResponse = t.TypeOf<typeof imageGenerationResponse>
+
+type ImageReturn = { done: false, i: number } | { done: true, image?: string }
