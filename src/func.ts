@@ -1,32 +1,14 @@
-import { UpdateFilter, MessageContext } from "@mtcute/dispatcher"
-
-export const parseRoleCmd = (msg: string) => {
-    const m = /^роль\s*([?:])\s*(.*)/i.exec(msg)
-    if (m) {
-        const cmd = m[1].trim()
-        if (cmd === ':') {
-            return { cmd: 'set' as const, role: m[2].trim() }
-        } else if (cmd === '?') {
-            return { cmd: 'get' as const }
-        } else {
-            return false
-        }
-    } else {
-        return false
-    }
-}
-
 export const assertDefined = <T>(x: T | undefined | null): T => {
     if (x) return x
-    throw 'assertDefined'
+    throw new Error('assertDefined')
 }
 
 export const first = <T>(list: T[]): T => {
     if (list.length > 0) return list[0]
-    throw 'first: empty list'
+    throw new Error('first: empty list')
 }
 
-export function toError(e: unknown): Error {
+export const toError = (e: unknown): Error => {
     try {
         return e instanceof Error ? e : new Error(String(e))
     } catch (error) {
@@ -34,32 +16,6 @@ export function toError(e: unknown): Error {
     }
 }
 
-export const removeMention = (msg: string) => msg.trim().replace(/^\s*@\w+[\s,]*/, '').trim()
-
-export const regexFilter = (regex: RegExp): UpdateFilter<MessageContext> => async (msg: MessageContext): Promise<boolean> => {
-    return regex.test(removeMention(msg.text))
-}
-
-const getTopicId = (msg: MessageContext): number | undefined => {
-    if (msg.raw._ !== 'message') return
-    const { replyTo } = msg.raw
-    if (replyTo && replyTo._ === 'messageReplyHeader' && replyTo.forumTopic) {
-        return replyTo.replyToTopId ?? replyTo.replyToMsgId
-    }
-}
-
-export const getChatTopicId = (msg: MessageContext): string => {
-    const chatId = msg.chat.id
-    const topicId = getTopicId(msg)
-    return topicId ? `${chatId}_${topicId}` : chatId.toFixed()
-}
-
-export const makeFailureMessage = (e?: string) => {
-    return e ? 'Не получилось 😢' : `Не получилось 😢: ${e}`
-}
-
-export function unixTimestamp(date = Date.now()) {
-    return Math.floor(date / 1000);
-}
+export const unixTimestamp = (date = Date.now()) => Math.floor(date / 1000)
 
 export const resToJson = (res: Response) => res.json()

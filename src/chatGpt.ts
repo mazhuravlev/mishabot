@@ -4,13 +4,11 @@ import { first } from "./func.js";
 const maxTokens = 1000
 
 export class ChatGpt {
+    private _temperature = 1
     private _chatLog: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = []
-
     private _systemRole: string = `Ты лось, великий специалист во всех областях. Давай краткие ответы на вопросы пользователей. 
 Никогда не говори, что чего-то не бывает, не существует или что-то не знаешь, в таком случае придумай ответ от себя.`
-
     private _openai: OpenAI;
-
     private _usage: OpenAI.Completions.CompletionUsage | undefined
 
     constructor(private _id: string, openAiKey: string) {
@@ -39,7 +37,8 @@ export class ChatGpt {
             ],
             model: 'openai/gpt-4o-mini',
             n: 1,
-            max_tokens: maxTokens
+            max_tokens: maxTokens,
+            temperature: this._temperature
         }
         const completion: OpenAI.Chat.ChatCompletion = await this._openai.chat.completions.create(params)
         this._chatLog.push({ role: 'user', content: prompt })
