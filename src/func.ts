@@ -53,3 +53,13 @@ export const getChatTopicId = (msg: MessageContext): string => {
     const topicId = getTopicId(msg)
     return topicId ? `${chatId}_${topicId}` : chatId.toFixed()
 }
+
+export const makeFailureMessage = (e?: string) => {
+    return e ? 'Не получилось 😢' : `Не получилось 😢: ${e}`
+}
+
+export function unixTimestamp(date = Date.now()) {
+    return Math.floor(date / 1000);
+}
+
+export const resToJson = (res: Response) => res.json()

@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
 import { first } from "./func.js";
 
 const maxTokens = 1000
@@ -78,6 +78,28 @@ export class ChatGpt {
         const completion = await this._openai.chat.completions.create(params)
         this.updateUsage(completion)
         return completion
+    }
+
+    public async speak(text: string) {
+        const x = await this._openai.audio.speech.create({
+            input: text,
+            voice: 'onyx',
+            model: 'tts-openai/tts-1',
+        })
+        const r = await x.arrayBuffer()
+        return r
+    }
+
+    public async transcribe(buffer: Uint8Array) {
+        const file = await toFile(buffer, 'voice.ogg')
+        const { text } = await this._openai.audio.transcriptions.create({
+            file,
+            model: 'stt-openai/whisper-1',
+            language: 'ru',
+            response_format: 'json',
+            temperature: 0.5,
+        })
+        return text
     }
 
     private updateUsage(completion: OpenAI.Chat.Completions.ChatCompletion) {

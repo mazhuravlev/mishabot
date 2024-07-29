@@ -6,13 +6,13 @@ import serve from 'koa-static'
 import { LocalStorage } from 'node-localstorage'
 import * as env from './env.js'
 import sharp from 'sharp'
-import { assertDefined, first, getChatTopicId, parseRoleCmd, regexFilter, removeMention } from './func.js'
-import { YandexGpt } from './yandex.js'
+import { assertDefined, first, getChatTopicId, makeFailureMessage, parseRoleCmd, regexFilter, removeMention } from './func.js'
 import { ChatGpt } from './chatGpt.js'
-import { Logger, ILogObj } from "tslog"
-import OpenAI from 'openai'
+import { Logger } from "tslog"
+import { AppLogger } from './types.js'
+import Yandex from './yandex/index.js'
 
-const log: Logger<ILogObj> = new Logger()
+const log: AppLogger = new Logger()
 
 const app = new Koa()
 app.use(serve('files', {}))
@@ -29,16 +29,18 @@ const tg = new TelegramClient({
     },
 })
 const dp = Dispatcher.for(tg)
-export const makeUpdateMessage = (msg: Message) => (text: string, media?: InputMediaLike) => tg.editMessage({ chatId: msg.chat.id, message: msg.id, text })
+export const makeUpdateMessage = (msg: Message) => (text?: string, media?: InputMediaLike) => tg.editMessage({ chatId: msg.chat.id, message: msg.id, text })
 
-const yandexGptPool = new Map<string, YandexGpt>()
+const yandexAuth = new Yandex.Auth(log)
+
+const yandexGptPool = new Map<string, Yandex.Gpt>()
 const getYandexGpt = (msg: MessageContext) => {
     const id = getChatTopicId(msg)
     const yandexGpt = yandexGptPool.get(id)
     if (yandexGpt) {
         return yandexGpt
     } else {
-        const newYandexGpt = new YandexGpt(id, env.YANDEX_FOLDER_ID, env.YANDEX_IAM_TOKEN, 'yandexgpt')
+        const newYandexGpt = new Yandex.Gpt(id, env.YANDEX_FOLDER_ID, () => yandexAuth.iamToken, 'yandexgpt')
         yandexGptPool.set(id, newYandexGpt)
         log.info(`Add new YandexGPT '${newYandexGpt.model}' for chat id ${id}`)
         return newYandexGpt
@@ -147,6 +149,21 @@ dp.onNewMessage(
         }
     })
 
+dp.onNewMessage(
+    filters.and(isAllowedMsg, filters.voice),
+    async (upd: MessageContext) => {
+        if (upd.media?.type !== 'voice') {
+            await upd.replyText('Што?')
+            return
+        }
+        const buffer = await tg.downloadAsBuffer(upd.media)
+        const gpt = await getChatGpt(upd)
+        const text = await gpt.transcribe(buffer)
+        tg.sendTyping(upd.chat.id, 'typing')
+        const completion = await gpt.query(text)
+        await upd.replyText(first(completion.choices).message.content ?? makeFailureMessage())
+    })
+
 const imgRegexp = /глянь\s*,?\s*/i
 dp.onNewMessage(
     filters.and(
@@ -159,7 +176,8 @@ dp.onNewMessage(
             upd.replyText('Нет')
             return
         }
-        const prompt = removeMention(upd.text).replace(imgRegexp, '')
+        const speakRegex = /^скажи/i
+        const prompt = removeMention(upd.text).replace(imgRegexp, '').replace(speakRegex, '')
         const photo = await (async (msg: MessageContext) => {
             if (upd.replyToMessage?.id) {
                 const repliedMsg = assertDefined((await tg.getMessages(upd.chat.id, [upd.replyToMessage.id]))[0])
@@ -178,7 +196,14 @@ dp.onNewMessage(
             const updateMessage = makeUpdateMessage(waitMessage)
             const gpt = await getChatGpt(upd)
             const imageResponse = await gpt.lookAtImage(prompt, `${url}/200_${filename}`)
-            await updateMessage(first(imageResponse.choices).message.content ?? 'Не получилось 😢')
+            const resultText = first(imageResponse.choices).message.content ?? makeFailureMessage()
+            if (speakRegex.test(removeMention(upd.text).replace(imgRegexp, ''))) {
+                const audio = await gpt.speak(resultText)
+                await tg.deleteMessages([waitMessage])
+                await upd.replyMedia(InputMedia.voice(new Uint8Array(audio)))
+            } else {
+                await updateMessage(resultText)
+            }
         } else {
             await upd.replyText(`Шо глянь ${Math.random() > 0.5 ? '🧐' : '🤔'}?`)
         }
@@ -195,7 +220,7 @@ dp.onNewMessage(
         await tg.sendTyping(upd.chat.id, 'typing')
         const updateMessage = makeUpdateMessage(waitMessage)
         const answer = await gpt.exerpt(/^выжимка!/i.test(upd.text))
-        await updateMessage(first(answer.choices).message.content ?? 'Не получилось 😢')
+        await updateMessage(first(answer.choices).message.content ?? makeFailureMessage())
     }
 )
 
@@ -222,16 +247,16 @@ dp.onNewMessage(
             next: async (o) => {
                 if (o.done) {
                     await tg.deleteMessages([waitMessage])
-                    await upd.replyMedia(InputMedia.photo(Buffer.from(assertDefined(o.image), 'base64'), { caption: upd.text, fileMime: 'image/jpeg' }))
+                    await upd.replyMedia(InputMedia.photo(Buffer.from(assertDefined(o.image), 'base64'), { fileMime: 'image/jpeg' }))
                 } else {
                     updateMessage(`Рисую ${o.i}`)
                 }
             },
             error: async (e) => {
                 if (typeof e === 'string') {
-                    updateMessage(`Не получилось, ошибка 😭: ${e}`)
+                    updateMessage(makeFailureMessage(e))
                 } else {
-                    updateMessage(`Не получилось, совсем неожиданная ошибка 😭`)
+                    updateMessage(makeFailureMessage('совсем неожиданная ошибка'))
                 }
             },
         })
@@ -241,7 +266,8 @@ dp.onNewMessage(
 dp.onNewMessage(
     isAllowedMsg,
     async (upd) => {
-        const prompt = removeMention(upd.text)
+        const speakRegex = /^скажи/i
+        const prompt = removeMention(upd.text).replace(speakRegex, '')
         await tg.sendTyping(upd.chat.id, 'typing')
         const gpt = await getChatGpt(upd)
         if (upd.replyToMessage?.id) {
@@ -253,24 +279,26 @@ dp.onNewMessage(
         const answer = await gpt.query(prompt)
         const message = answer.choices[0].message
         if (answer && message.content) {
-            gpt.pushContext({ role: 'user', content: prompt })
-            gpt.pushContext({ role: 'assistant', content: message.content })
-            await upd.replyText(message.content)
+            if (speakRegex.test(removeMention(upd.text))) {
+                const audio = await gpt.speak(message.content)
+                await upd.replyMedia(InputMedia.voice(new Uint8Array(audio)))
+            } else {
+                await upd.replyText(message.content)
+            }
             if (gpt.usage) {
                 log.debug(`[usage gpt ${gpt.id}]: ${gpt.usage.total_tokens}`)
             }
         } else {
-            await upd.replyText('Не получилось 😢')
+            await upd.replyText(makeFailureMessage())
         }
     })
 
 tg.run({
     phone: () => tg.input('Phone > '),
     code: () => tg.input('Code > '),
-    password: () => tg.input('Password > ')
+    password: () => tg.input('Password > '),
 }, async (self) => {
     console.log(`Logged in as ${self.displayName}
 Username: ${await tg.getMyUsername()}`)
-
 })
 
