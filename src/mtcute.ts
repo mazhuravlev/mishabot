@@ -1,7 +1,7 @@
 import { UpdateFilter, MessageContext } from "@mtcute/dispatcher"
 import { removeMention } from "./bot.js"
 import { InputMediaLike, Message, Photo, TelegramClient } from "@mtcute/node"
-import { assertDefined, first } from "./func.js"
+import { assertDefined } from "./func.js"
 import { ChatGpt } from "./chatGpt.js"
 
 export const regexFilter = (regex: RegExp): UpdateFilter<MessageContext> =>

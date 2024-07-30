@@ -1,13 +1,13 @@
-import { Dispatcher, MessageContext, filters } from '@mtcute/dispatcher'
-import { InputMedia, Photo, TelegramClient, md } from '@mtcute/node'
+import { Dispatcher, MessageContext } from '@mtcute/dispatcher'
+import { InputMedia, TelegramClient } from '@mtcute/node'
 import * as ngrok from 'ngrok'
 import Koa from 'koa'
 import serve from 'koa-static'
-import * as env from './env.js'
+import env from './env.js'
 import sharp from 'sharp'
-import { assertDefined, first } from './func.js'
-import { makeFailureMessage, parseRoleCmd, removeMention } from './bot.js'
-import { getChatId, makeUpdateMessage as _makeUpdateMessage, regexFilter, makeIsAllowedMsg, getMessagePhoto, getMessageText } from './mtcute.js'
+import { assertDefined, first, not } from './func.js'
+import { getRepliedMessage, makeFailureMessage, removeMention } from './bot.js'
+import { getChatId, makeUpdateMessage as _makeUpdateMessage, makeIsAllowedMsg, getMessagePhoto, getMessageText } from './mtcute.js'
 import { ChatGpt } from './chatGpt.js'
 import { Logger } from "tslog"
 import { AppLogger } from './types.js'
@@ -75,27 +75,31 @@ dp.onNewMessage(
         const gpt = getChatGpt(upd)
         const prompt = removeMention(await getMessageText(tg, gpt, upd))
         if (prompt === '') return
-        await tg.sendTyping(upd.chat.id, 'typing')
-        if (upd.replyToMessage?.id) {
-            const originalMessage = assertDefined(first(await tg.getMessages(upd.chat.id, [upd.replyToMessage.id])))
-            if (originalMessage.sender.username !== await tg.getMyUsername() && originalMessage.text) {
-                gpt.pushContext({ role: 'user', content: originalMessage.text })
-            }
-        }
         if (/^глянь\s*,?\s*/i.test(prompt)) {
-            if (!env.IMAGE_RECOGNITION) {
+            if (not(env.IMAGE_RECOGNITION)) {
                 upd.replyText('Нет')
                 return
             } else {
-                const waitMessage = await upd.replyText('Щас гляну!')
+                tg.sendTyping(upd.chat.id, 'typing')
+                await addRepliedMessageContext()
+                const waitMessageP = upd.replyText('Щас гляну!')
                 const result = await doLook(gpt, upd, prompt)
-                const updateMessage = makeUpdateMessage(waitMessage)
-                await updateMessage(result)
+                await makeUpdateMessage(await waitMessageP)(result)
             }
         } else if (/^нарисуй/i.test(prompt)) {
-            await doDraw(upd, prompt)
+            if (/нарисуй это/i.test(prompt)) {
+                const repliedMessage = await getRepliedMessage(tg, upd, true)
+                if (repliedMessage && repliedMessage.text) {
+                    await doDraw(upd, repliedMessage.text)
+                } else {
+                    upd.answerText('Что именно требуется нарисовать?')
+                }
+            } else {
+                await doDraw(upd, prompt)
+            }
         } else {
-            const { content } = first((await gpt.query(prompt)).choices).message
+            await addRepliedMessageContext()
+            const { content } = first((await gpt.query(prompt, upd.sender.displayName)).choices).message
             if (content) {
                 if (/^скажи/i.test(prompt)) {
                     const voice = InputMedia.voice(new Uint8Array(await gpt.speak(content)))
@@ -105,6 +109,13 @@ dp.onNewMessage(
                 }
             } else {
                 await upd.replyText(makeFailureMessage())
+            }
+        }
+
+        async function addRepliedMessageContext() {
+            const repliedMessage = await getRepliedMessage(tg, upd)
+            if (repliedMessage) {
+                gpt.addUserContext(repliedMessage.text, repliedMessage.sender.displayName)
             }
         }
     })
@@ -158,7 +169,7 @@ async function doLook(gpt: ChatGpt, msg: MessageContext, prompt: string) {
         const imgPath = (f: string) => `files/${f}`
         await tg.downloadToFile(imgPath(filename), photo)
         await sharp(imgPath(filename)).resize(256, 256).toFile(imgPath(`256_${filename}`))
-        const imageResponse = await gpt.lookAtImage(prompt, `${url}/256_${filename}`)
+        const imageResponse = await gpt.lookAtImage(prompt, `${url}/256_${filename}`, msg.sender.displayName)
         return first(imageResponse.choices).message.content ?? makeFailureMessage()
     } else {
         return `Нечего глядеть ${Math.random() > 0.5 ? '🧐' : '🤔'}?`

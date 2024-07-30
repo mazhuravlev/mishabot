@@ -1,5 +1,7 @@
+import { MessageContext } from "@mtcute/dispatcher"
 import { ChatGpt } from "./chatGpt.js"
-import { first } from "./func.js"
+import { assertDefined, first } from "./func.js"
+import { TelegramClient } from "@mtcute/node"
 
 export const removeMention = (msg: string) => msg.trim().replace(/^\s*@\w+[\s,]*/, '').trim()
 
@@ -26,4 +28,18 @@ export const parseRoleCmd = (msg: string) => {
 export async function makeExcerpt(gpt: ChatGpt, apply: boolean) {
     const answer = await gpt.exerpt(apply)
     return first(answer.choices).message
+}
+
+export async function getRepliedMessage(tg: TelegramClient, upd: MessageContext, includeBotMessage = false) {
+    if (upd.replyToMessage?.id) {
+        const originalMessage = assertDefined(first(await tg.getMessages(upd.chat.id, [upd.replyToMessage.id])))
+        const includeMessage = originalMessage.text && (includeBotMessage || (originalMessage.sender.username !== await tg.getMyUsername()))
+        if (includeMessage) {
+            return originalMessage
+        } else {
+            return undefined
+        }
+    } else {
+        return undefined
+    }
 }

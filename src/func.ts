@@ -19,3 +19,5 @@ export const toError = (e: unknown): Error => {
 export const unixTimestamp = (date = Date.now()) => Math.floor(date / 1000)
 
 export const resToJson = (res: Response) => res.json()
+
+export const not = (x: unknown): boolean => !x
