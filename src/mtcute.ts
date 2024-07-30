@@ -1,6 +1,6 @@
 import { UpdateFilter, MessageContext } from "@mtcute/dispatcher"
 import { removeMention } from "./bot.js"
-import { InputMediaLike, Message, Photo, TelegramClient } from "@mtcute/node"
+import { InputMediaLike, Message, Peer, Photo, TelegramClient } from "@mtcute/node"
 import { assertDefined } from "./func.js"
 import { ChatGpt } from "./chatGpt.js"
 
@@ -58,3 +58,5 @@ export async function getMessageText(tg: TelegramClient, gpt: ChatGpt, upd: Mess
         return upd.text
     }
 }
+
+export const getUsername = (peer: Peer) => peer.username ?? undefined

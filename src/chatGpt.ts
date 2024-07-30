@@ -35,15 +35,16 @@ export class ChatGpt {
 
     public set role(role: string) { this._systemRole = role }
 
-    public async query(prompt: string, username: string) {
-        const completion = await this._query(prompt, username)
+    public async query(prompt: string, username: string | undefined) {
+        const completion = await this._query(prompt)
         this._chatLog.push({ role: 'user', content: prompt, name: username })
         this._chatLog.push(first(completion.choices).message)
+        this.saveState()
         return completion
     }
 
     public async exerpt(apply: boolean) {
-        const completion = await this._query('Сделай выжимку из нашей беседы.', 'system')
+        const completion = await this._query('Сделай выжимку из нашей беседы.')
         const answer = first(completion.choices)
         if (apply) {
             this._chatLog = [answer.message]
@@ -52,7 +53,7 @@ export class ChatGpt {
         return completion
     }
 
-    public async lookAtImage(prompt: string, imageUrl: string, username: string) {
+    public async lookAtImage(prompt: string, imageUrl: string) {
         const params: OpenAI.Chat.ChatCompletionCreateParams = {
             messages: [
                 { role: 'system', content: this._systemRole },
@@ -72,6 +73,7 @@ export class ChatGpt {
         const completion = await this._openai.chat.completions.create(params)
         this._chatLog.push(first(completion.choices).message)
         this.updateUsage(completion)
+        this.saveState()
         return completion
     }
 
@@ -97,7 +99,7 @@ export class ChatGpt {
         return text
     }
 
-    private async _query(prompt: string, username: string) {
+    private async _query(prompt: string) {
         const params: OpenAI.Chat.ChatCompletionCreateParams = {
             messages: [
                 { role: 'system', content: this._systemRole },
@@ -118,10 +120,9 @@ export class ChatGpt {
         if (completion.usage) {
             this._usage = completion.usage;
         }
-        this.saveState()
     }
 
-    public addUserContext(content: string, name: string) {
+    public addUserContext(content: string, name: string | undefined) {
         this._chatLog.push({
             role: 'user',
             content,

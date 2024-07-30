@@ -7,7 +7,7 @@ import env from './env.js'
 import sharp from 'sharp'
 import { assertDefined, first, not } from './func.js'
 import { getRepliedMessage, makeFailureMessage, removeMention } from './bot.js'
-import { getChatId, makeUpdateMessage as _makeUpdateMessage, makeIsAllowedMsg, getMessagePhoto, getMessageText } from './mtcute.js'
+import { getChatId, makeUpdateMessage as _makeUpdateMessage, makeIsAllowedMsg, getMessagePhoto, getMessageText, getUsername } from './mtcute.js'
 import { ChatGpt } from './chatGpt.js'
 import { Logger } from "tslog"
 import { AppLogger } from './types.js'
@@ -99,7 +99,7 @@ dp.onNewMessage(
             }
         } else {
             await addRepliedMessageContext()
-            const { content } = first((await gpt.query(prompt, upd.sender.displayName)).choices).message
+            const { content } = first((await gpt.query(prompt, getUsername(upd.sender))).choices).message
             if (content) {
                 if (/^скажи/i.test(prompt)) {
                     const voice = InputMedia.voice(new Uint8Array(await gpt.speak(content)))
@@ -115,7 +115,7 @@ dp.onNewMessage(
         async function addRepliedMessageContext() {
             const repliedMessage = await getRepliedMessage(tg, upd)
             if (repliedMessage) {
-                gpt.addUserContext(repliedMessage.text, repliedMessage.sender.displayName)
+                gpt.addUserContext(repliedMessage.text, getUsername(repliedMessage.sender))
             }
         }
     })
@@ -169,7 +169,7 @@ async function doLook(gpt: ChatGpt, msg: MessageContext, prompt: string) {
         const imgPath = (f: string) => `files/${f}`
         await tg.downloadToFile(imgPath(filename), photo)
         await sharp(imgPath(filename)).resize(256, 256).toFile(imgPath(`256_${filename}`))
-        const imageResponse = await gpt.lookAtImage(prompt, `${url}/256_${filename}`, msg.sender.displayName)
+        const imageResponse = await gpt.lookAtImage(prompt, `${url}/256_${filename}`)
         return first(imageResponse.choices).message.content ?? makeFailureMessage()
     } else {
         return `Нечего глядеть ${Math.random() > 0.5 ? '🧐' : '🤔'}?`
