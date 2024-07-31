@@ -1,28 +1,48 @@
-import OpenAI, { toFile } from "openai";
-import { first } from "./func.js";
+import OpenAI, { toFile } from "openai"
+import { first } from "./func.js"
 import { LocalStorage } from 'node-localstorage'
 import t from 'io-ts'
 import { pipe } from "fp-ts/lib/function.js"
 import { fold } from "fp-ts/lib/Either.js"
+import { Subject } from "rxjs"
+import { AppLogger } from "./types.js"
 
 const maxTokens = 1000
+const usageCheckIntervalMinutes = 1
+const excerptTokenThreshold = 2000
 
 export class ChatGpt {
     private _temperature = 1
     private _chatLog: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = []
-    private _systemRole: string = `Ты лось, великий специалист во всех областях. Давай краткие ответы на вопросы пользователей. 
-Никогда не говори, что чего-то не бывает, не существует или что-то не знаешь, в таком случае придумай ответ от себя.`
-    private _openai: OpenAI;
+    private _systemRole: string
+    private _openai: OpenAI
     private _usage: OpenAI.Completions.CompletionUsage | undefined
-    private _storage: LocalStorage;
+    private _storage: LocalStorage
+    private _excerptSubject = new Subject<OpenAI.Completions.CompletionUsage>()
+    private _excerptIntervalId: NodeJS.Timeout
 
-    constructor(private _id: string, openAiKey: string) {
+    constructor(
+        private _id: string,
+        private _log: AppLogger,
+        openAiKey: string,
+        openAiBaseUrl: string,
+        defaultSystemRole: string,
+    ) {
+        this._systemRole = defaultSystemRole
         this._openai = new OpenAI({
             apiKey: openAiKey,
-            baseURL: 'https://api.vsegpt.ru/v1',
+            baseURL: openAiBaseUrl,
         })
         this._storage = new LocalStorage(`localStorage/gpt_${this._id}`)
         this.loadState()
+        this._excerptIntervalId = setInterval(async () => {
+            if (!this._usage) return
+            if (this._usage.prompt_tokens > excerptTokenThreshold) {
+                _log.info('make excerpt', this._id)
+                this._excerptSubject.next(this._usage)
+                await this.exerpt(true)
+            }
+        }, usageCheckIntervalMinutes * 60 * 1000)
     }
 
     public get id() { return this._id }
@@ -31,9 +51,14 @@ export class ChatGpt {
 
     public get logSize() { return this._chatLog.length }
 
-    public get role() { return this._systemRole }
+    public get role(): string { return this._systemRole }
 
-    public set role(role: string) { this._systemRole = role }
+    public get excerptObservable() { return this._excerptSubject.asObservable() }
+
+    public set role(role: string) {
+        this._systemRole = role
+        this.saveState()
+    }
 
     public async query(prompt: string, username: string | undefined) {
         const completion = await this._query(prompt)
@@ -44,12 +69,13 @@ export class ChatGpt {
     }
 
     public async exerpt(apply: boolean) {
-        const completion = await this._query('Сделай выжимку из нашей беседы.')
+        const completion = await this._query('Сделай подробную выжимку из нашей беседы')
         const answer = first(completion.choices)
         if (apply) {
             this._chatLog = [answer.message]
         }
         this.updateUsage(completion)
+        this.saveState()
         return completion
     }
 
@@ -67,7 +93,7 @@ export class ChatGpt {
             ],
             model: 'openai/gpt-4o-mini',
             n: 1,
-            max_tokens: 1000,
+            max_tokens: maxTokens,
             temperature: this._temperature,
         }
         const completion = await this._openai.chat.completions.create(params)
@@ -97,6 +123,10 @@ export class ChatGpt {
             temperature: 0.5,
         })
         return text
+    }
+
+    public dispose() {
+        clearInterval(this._excerptIntervalId)
     }
 
     private async _query(prompt: string) {

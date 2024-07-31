@@ -4,7 +4,7 @@ module.exports = {
         es2021: true,
         node: true,
     },
-    extends: ['eslint:recommended', 'plugin:import/recommended', 'prettier'],
+    extends: ['eslint:recommended', 'eslint:recommended-type-checked', 'plugin:import/recommended', 'prettier'],
     parserOptions: {
         ecmaVersion: 'latest',
         sourceType: 'module',

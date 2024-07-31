@@ -1,12 +1,12 @@
 import { Dispatcher, MessageContext } from '@mtcute/dispatcher'
-import { InputMedia, TelegramClient } from '@mtcute/node'
+import { InputMedia, md, TelegramClient } from '@mtcute/node'
 import * as ngrok from 'ngrok'
 import Koa from 'koa'
 import serve from 'koa-static'
 import env from './env.js'
 import sharp from 'sharp'
-import { assertDefined, first, not } from './func.js'
-import { getRepliedMessage, makeFailureMessage, removeMention } from './bot.js'
+import { assertDefined, cb, first, not } from './func.js'
+import { getRepliedMessage, makeFailureMessage, removeMention, botStrings } from './bot.js'
 import { getChatId, makeUpdateMessage as _makeUpdateMessage, makeIsAllowedMsg, getMessagePhoto, getMessageText, getUsername } from './mtcute.js'
 import { ChatGpt } from './chatGpt.js'
 import { Logger } from "tslog"
@@ -47,15 +47,14 @@ const getYandexGpt = (msg: MessageContext) => {
 }
 
 const gptPool = new Map<string, ChatGpt>()
-const getChatGpt = (msg: MessageContext) => {
-    const id = getChatId(msg)
-    const chatGpt = gptPool.get(id)
+const getChatGpt = (msg: MessageContext, chatId: string) => {
+    const chatGpt = gptPool.get(chatId)
     if (chatGpt) {
         return chatGpt
     } else {
-        const newChatGpt = new ChatGpt(id, env.OPENAI_API_KEY)
-        gptPool.set(id, newChatGpt)
-        log.info(`Add new ChatGpt for chat id ${id}`)
+        const newChatGpt = new ChatGpt(chatId, log, env.OPENAI_API_KEY, env.OPENAI_BASE_URL, env.GPT_DEFAULT_SYSTEM_ROLE)
+        gptPool.set(chatId, newChatGpt)
+        log.info(`Add new ChatGpt for chat id ${chatId}`)
         return newChatGpt
     }
 }
@@ -71,49 +70,68 @@ dp.onMessageGroup(
 
 dp.onNewMessage(
     isAllowedMsg,
-    async (upd: MessageContext) => {
-        const gpt = getChatGpt(upd)
-        const prompt = removeMention(await getMessageText(tg, gpt, upd))
+    async (ctx: MessageContext) => {
+        const chatId = getChatId(ctx)
+        log.debug('UPD', chatId, ctx.sender.username, ctx.media?.type ?? 'none', ctx.text)
+        const gpt = getChatGpt(ctx, chatId)
+        const prompt = removeMention(await getMessageText(tg, gpt, ctx))
         if (prompt === '') return
-        if (/^глянь\s*,?\s*/i.test(prompt)) {
+        if (botStrings.status.test(prompt)) {
+            ctx.answerText(md(cb(JSON.stringify(gpt.usage, null, 2))))
+        } else if (botStrings.setRole.test(prompt)) {
+            gpt.role = botStrings.setRole.sanitize(prompt)
+            ctx.answerText(gpt.role)
+        } else if (botStrings.getRole.test(prompt)) {
+            ctx.answerText(gpt.role)
+        } else if (botStrings.look.test(prompt)) {
             if (not(env.IMAGE_RECOGNITION)) {
-                upd.replyText('Нет')
+                ctx.replyText('Нет')
                 return
             } else {
-                tg.sendTyping(upd.chat.id, 'typing')
+                tg.sendTyping(ctx.chat.id, 'typing')
                 await addRepliedMessageContext()
-                const waitMessageP = upd.replyText('Щас гляну!')
-                const result = await doLook(gpt, upd, prompt)
+                const waitMessageP = ctx.replyText('Щас гляну!')
+                const result = await doLook(gpt, ctx, prompt)
                 await makeUpdateMessage(await waitMessageP)(result)
             }
-        } else if (/^нарисуй/i.test(prompt)) {
-            if (/нарисуй это/i.test(prompt)) {
-                const repliedMessage = await getRepliedMessage(tg, upd, true)
+        } else if (botStrings.draw.test(prompt)) {
+            tg.sendTyping(ctx.chat.id, 'typing')
+            if (botStrings.drawThis.test(prompt)) {
+                const repliedMessage = await getRepliedMessage(tg, ctx, true)
                 if (repliedMessage && repliedMessage.text) {
-                    await doDraw(upd, repliedMessage.text)
+                    await doDraw(ctx,
+                        [
+                            repliedMessage.text,
+                            botStrings.drawThis.sanitize(prompt)
+                        ]
+                            .filter(x => x.length > 0)
+                            .join(', '),
+                        gpt)
                 } else {
-                    upd.answerText('Что именно требуется нарисовать?')
+                    ctx.answerText('Что именно требуется нарисовать?')
                 }
             } else {
-                await doDraw(upd, prompt)
+                await doDraw(ctx, prompt, gpt)
             }
         } else {
+            tg.sendTyping(ctx.chat.id, 'typing')
             await addRepliedMessageContext()
-            const { content } = first((await gpt.query(prompt, getUsername(upd.sender))).choices).message
+            const { content } = first((await gpt.query(prompt, getUsername(ctx.sender))).choices).message
             if (content) {
-                if (/^скажи/i.test(prompt)) {
+                if (botStrings.speak.test(prompt)) {
+                    tg.sendTyping(ctx.chat.id, 'typing')
                     const voice = InputMedia.voice(new Uint8Array(await gpt.speak(content)))
-                    await upd.replyMedia(voice)
+                    await ctx.replyMedia(voice)
                 } else {
-                    upd.answerText(content)
+                    ctx.answerText(md(content))
                 }
             } else {
-                await upd.replyText(makeFailureMessage())
+                await ctx.replyText(makeFailureMessage())
             }
         }
 
         async function addRepliedMessageContext() {
-            const repliedMessage = await getRepliedMessage(tg, upd)
+            const repliedMessage = await getRepliedMessage(tg, ctx)
             if (repliedMessage) {
                 gpt.addUserContext(repliedMessage.text, getUsername(repliedMessage.sender))
             }
@@ -125,20 +143,18 @@ tg.run({
     code: () => tg.input('Code > '),
     password: () => tg.input('Password > '),
 }, async (self) => {
-    console.log(`Logged in as ${self.displayName}
-Username: ${await tg.getMyUsername()}`)
+    console.log(`Logged in as ${self.username}`)
 })
 
-async function doDraw(upd: MessageContext, prompt: string) {
-    const aspectRegex = /\s(\d+)\/(\d+)/
-    const aspectMatch = aspectRegex.exec(upd.text)
-    const waitMessage = await upd.replyText('Щас нарисую!')
+async function doDraw(ctx: MessageContext, prompt: string, gpt: ChatGpt) {
+    const waitMessage = await ctx.replyText('Щас нарисую!')
     const updateMessage = makeUpdateMessage(waitMessage)
-    const yGpt = getYandexGpt(upd)
+    const yGpt = getYandexGpt(ctx)
+    const aspectRatio = botStrings.aspectRatio.get(ctx.text)
     const img = await yGpt.image(
-        prompt.replace(aspectRegex, ''),
-        aspectMatch?.[1] ?? '1',
-        aspectMatch?.[2] ?? '1'
+        botStrings.aspectRatio.sanitize(ctx.text),
+        aspectRatio?.width ?? '1',
+        aspectRatio?.height ?? '1'
     )
     img.subscribe({
         next: async (o) => {
@@ -147,7 +163,8 @@ async function doDraw(upd: MessageContext, prompt: string) {
                 const image = InputMedia.photo(
                     Buffer.from(assertDefined(o.image), 'base64'),
                     { fileMime: 'image/jpeg' })
-                await upd.replyMedia(image)
+                await ctx.replyMedia(image, { caption: prompt })
+                gpt.addUserContext(prompt, getUsername(ctx.sender))
             } else {
                 updateMessage(`Рисую ${o.i}`)
             }
