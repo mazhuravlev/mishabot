@@ -1,13 +1,7 @@
 import { UpdateFilter, MessageContext } from "@mtcute/dispatcher"
-import { removeMention } from "./bot.js"
-import { InputMediaLike, Message, Peer, Photo, TelegramClient } from "@mtcute/node"
+import { Message, Peer, TelegramClient } from "@mtcute/node"
 import { assertDefined } from "./func.js"
 import { ChatGpt } from "./chatGpt.js"
-
-export const regexFilter = (regex: RegExp): UpdateFilter<MessageContext> =>
-    async (msg: MessageContext): Promise<boolean> => {
-        return regex.test(removeMention(msg.text))
-    }
 
 export const getChatId = (msg: MessageContext): string => {
     const getTopicId = (msg: MessageContext): number | undefined => {
@@ -24,7 +18,7 @@ export const getChatId = (msg: MessageContext): string => {
 
 export const makeUpdateMessage = (tg: TelegramClient) =>
     (msg: Message) =>
-        (text?: string, media?: InputMediaLike) =>
+        (text?: string) =>
             tg.editMessage({ chatId: msg.chat.id, message: msg.id, text })
 
 export const makeIsAllowedMsg: (tg: TelegramClient) => UpdateFilter<MessageContext> =
@@ -44,9 +38,9 @@ export const makeIsAllowedMsg: (tg: TelegramClient) => UpdateFilter<MessageConte
 export async function getMessagePhoto(tg: TelegramClient, msg: MessageContext) {
     if (msg.replyToMessage?.id) {
         const repliedMsg = assertDefined((await tg.getMessages(msg.chat.id, [msg.replyToMessage.id]))[0])
-        return repliedMsg.media?.type === 'photo' ? repliedMsg.media as Photo : undefined
+        return repliedMsg.media?.type === 'photo' ? repliedMsg.media : undefined
     } else {
-        return msg.media?.type === 'photo' ? msg.media as Photo : undefined
+        return msg.media?.type === 'photo' ? msg.media : undefined
     }
 }
 

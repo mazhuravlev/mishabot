@@ -1,8 +1,8 @@
 import { Observable, throwError } from "rxjs"
-import { first, resToJson } from "../func.js"
+import { decode, first, resToJson } from "../func.js"
 import { pipe } from "fp-ts/lib/function.js"
 import { fold } from "fp-ts/lib/Either.js"
-import { Completion, imageGenerationResponse, imageResponse, ImageReturn, Message } from "./types.js"
+import { Completion, imageGenerationResponse, imageResponseType, ImageReturn, Message } from "./types.js"
 
 export class Gpt {
     private _temperature = 0.5
@@ -80,25 +80,23 @@ export class Gpt {
                 }
             ]
         }
-        const response = await fetch('https://llm.api.cloud.yandex.net/foundationModels/v1/imageGenerationAsync', {
+
+        try {
+            const response = await fetch('https://llm.api.cloud.yandex.net/foundationModels/v1/imageGenerationAsync', {
             method: 'post',
             headers: this.yandexHeaders(),
             body: JSON.stringify(query)
         })
-        const imageResponseValidation = imageResponse.decode(await response.json())
-        return pipe(imageResponseValidation, fold(e => {
-            return throwError(() => e)
-        }, imageResponse => {
+            const imageResponse = decode(imageResponseType)(await response.json())
             if ('error' in imageResponse) {
                 return throwError(() => imageResponse.message)
-            }
+            } else {
             return new Observable<ImageReturn>(observer => {
                 let i = 1
                 const interval = setInterval(async () => {
-                    const response = await fetch(`https://llm.api.cloud.yandex.net:443/operations/${imageResponse.id}`,
+                    const response: unknown = await fetch(`https://llm.api.cloud.yandex.net:443/operations/${imageResponse.id}`,
                         { headers: this.yandexHeaders() }).then(resToJson)
-                    const responseValidation = imageGenerationResponse.decode(response)
-                    pipe(responseValidation, fold(
+                    pipe(imageGenerationResponse.decode(response), fold(
                         e => {
                             clearInterval(interval)
                             console.error(e)
@@ -114,6 +112,9 @@ export class Gpt {
                         }))
                 }, 3000)
             })
-        }))
+            }
+        } catch (e) {
+            return throwError(() => e)
+        }
     }
 }

@@ -1,9 +1,10 @@
 import * as t from 'io-ts'
 
-export interface IamToken {
-    iamToken: string;
-    expiresAt: string;
-}
+export type IamToken = t.TypeOf<typeof iamToken>
+export const iamToken = t.type({
+    iamToken: t.string,
+    expiresAt: t.string,
+})
 
 export interface Completion {
     result: Result;
@@ -43,7 +44,7 @@ export interface CompletionOptions {
     maxTokens: string;
 }
 
-export const imageResponse = t.union([
+export const imageResponseType = t.union([
     t.type({
         id: t.string,
     }),
@@ -54,7 +55,7 @@ export const imageResponse = t.union([
     }),
 ])
 
-export type ImageResponse = t.TypeOf<typeof imageResponse>
+export type ImageResponse = t.TypeOf<typeof imageResponseType>
 
 export const imageGenerationResponse = t.union([
     t.type({

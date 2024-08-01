@@ -1,8 +1,8 @@
-import { assertDefined, resToJson, unixTimestamp } from "../func.js"
+import { assertDefined, decode, resToJson, unixTimestamp } from "../func.js"
 import { AppLogger } from "../types.js"
 import yandexKey from '../key.json' assert {type: 'json'}
 import jwt from 'jsonwebtoken'
-import { IamToken } from "./types.js"
+import { iamToken, IamToken } from "./types.js"
 
 const IAM_TOKEN_UPDATE_INTERVAL = 3600 * 1000
 
@@ -33,7 +33,7 @@ export class Auth {
             method: 'post',
             body: JSON.stringify({ jwt }),
             headers: { 'Content-Type': 'application/json' }
-        }).then(resToJson)
+        }).then(resToJson).then(decode(iamToken))
     }
 
     private makeJwt() {

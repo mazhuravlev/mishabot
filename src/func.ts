@@ -1,3 +1,7 @@
+import { isLeft } from 'fp-ts/lib/Either.js'
+import { failure } from "io-ts/lib/PathReporter.js"
+import t from 'io-ts'
+
 export const assertDefined = <T>(x: T | undefined | null): T => {
     if (x) return x
     throw new Error('assertDefined')
@@ -9,11 +13,7 @@ export const first = <T>(list: T[]): T => {
 }
 
 export const toError = (e: unknown): Error => {
-    try {
-        return e instanceof Error ? e : new Error(String(e))
-    } catch (error) {
-        return new Error()
-    }
+    return e instanceof Error ? e : new Error(JSON.stringify(e))
 }
 
 export const unixTimestamp = (date = Date.now()) => Math.floor(date / 1000)
@@ -37,3 +37,12 @@ export const assertNonEmptyString = (s: unknown) => {
  * @returns 
  */
 export const cb = (s: string) => '```\n' + s + '```'
+
+export const decode = <T>(type: t.Type<T>) => (value: unknown): T => {
+    const v = type.decode(value)
+    if (isLeft(v)) {
+        throw new Error(failure(v.left).join('\n'))
+    } else {
+        return v.right
+    }
+}

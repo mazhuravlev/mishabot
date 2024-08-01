@@ -1,9 +1,7 @@
 import OpenAI, { toFile } from "openai"
-import { first } from "./func.js"
+import { decode, first } from "./func.js"
 import { LocalStorage } from 'node-localstorage'
 import t from 'io-ts'
-import { pipe } from "fp-ts/lib/function.js"
-import { fold } from "fp-ts/lib/Either.js"
 import { Subject } from "rxjs"
 import { AppLogger } from "./types.js"
 
@@ -11,9 +9,15 @@ const maxTokens = 1000
 const usageCheckIntervalMinutes = 1
 const excerptTokenThreshold = 2000
 
+interface ChatLogRecord {
+    role: 'user' | 'assistant' | 'system'
+    content: string
+    name?: string
+}
+
 export class ChatGpt {
     private _temperature = 1
-    private _chatLog: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = []
+    private _chatLog: ChatLogRecord[] = []
     private _systemRole: string
     private _openai: OpenAI
     private _usage: OpenAI.Completions.CompletionUsage | undefined
@@ -51,9 +55,9 @@ export class ChatGpt {
 
     public get logSize() { return this._chatLog.length }
 
-    public get role(): string { return this._systemRole }
-
     public get excerptObservable() { return this._excerptSubject.asObservable() }
+
+    public get role(): string { return this._systemRole }
 
     public set role(role: string) {
         this._systemRole = role
@@ -63,16 +67,15 @@ export class ChatGpt {
     public async query(prompt: string, username: string | undefined) {
         const completion = await this._query(prompt)
         this._chatLog.push({ role: 'user', content: prompt, name: username })
-        this._chatLog.push(first(completion.choices).message)
+        this.pushLog(completion)
         this.saveState()
         return completion
     }
 
     public async exerpt(apply: boolean) {
         const completion = await this._query('Сделай подробную выжимку из нашей беседы')
-        const answer = first(completion.choices)
         if (apply) {
-            this._chatLog = [answer.message]
+            this.pushLog(completion)
         }
         this.updateUsage(completion)
         this.saveState()
@@ -97,7 +100,7 @@ export class ChatGpt {
             temperature: this._temperature,
         }
         const completion = await this._openai.chat.completions.create(params)
-        this._chatLog.push(first(completion.choices).message)
+        this.pushLog(completion)
         this.updateUsage(completion)
         this.saveState()
         return completion
@@ -127,6 +130,10 @@ export class ChatGpt {
 
     public dispose() {
         clearInterval(this._excerptIntervalId)
+    }
+
+    private pushLog(completion: OpenAI.Chat.Completions.ChatCompletion) {
+        toChatLog(completion)?.map(x => this._chatLog.push(x))
     }
 
     private async _query(prompt: string) {
@@ -163,16 +170,10 @@ export class ChatGpt {
     private loadState() {
         const json = this._storage.getItem('state.json')
         if (json) {
-            pipe(
-                storageType.decode(JSON.parse(json)),
-                fold(
-                    e => { throw e },
-                    state => {
-                        this._systemRole = state.systemRole
-                        this._chatLog = state.chatLog
-                        this._usage = state.usage
-                    }
-                ))
+            const state = decode(storageType)(JSON.parse(json))
+            this._systemRole = state.systemRole
+            this._chatLog = state.chatLog
+            this._usage = state.usage
         }
     }
 
@@ -186,9 +187,20 @@ export class ChatGpt {
     }
 }
 
+const roleType = t.union([t.literal('system'), t.literal('assistant'), t.literal('user')])
 const storageType = t.type({
     systemRole: t.string,
-    chatLog: t.array(t.any),
+    chatLog: t.array(t.union([
+        t.type({
+            role: roleType,
+            content: t.string,
+        }),
+        t.type({
+            role: roleType,
+            content: t.string,
+            name: t.string,
+        })
+    ])),
     usage: t.union([
         t.undefined,
         t.type({
@@ -200,3 +212,16 @@ const storageType = t.type({
 })
 
 type StorageType = t.TypeOf<typeof storageType>
+
+function toChatLog(completion: OpenAI.Chat.Completions.ChatCompletion) {
+    const c = first(completion.choices)
+    const { role, content } = c.message
+    if (content) {
+        return {
+            map: (f: (x: ChatLogRecord) => void) => f({
+                role,
+                content,
+            })
+        }
+    }
+}

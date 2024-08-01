@@ -5,7 +5,7 @@ import Koa from 'koa'
 import serve from 'koa-static'
 import env from './env.js'
 import sharp from 'sharp'
-import { assertDefined, cb, first, not } from './func.js'
+import { assertDefined, cb, first, not, toError } from './func.js'
 import { getRepliedMessage, makeFailureMessage, removeMention, botStrings } from './bot.js'
 import { getChatId, makeUpdateMessage as _makeUpdateMessage, makeIsAllowedMsg, getMessagePhoto, getMessageText, getUsername } from './mtcute.js'
 import { ChatGpt } from './chatGpt.js'
@@ -77,28 +77,28 @@ dp.onNewMessage(
         const prompt = removeMention(await getMessageText(tg, gpt, ctx))
         if (prompt === '') return
         if (botStrings.status.test(prompt)) {
-            ctx.answerText(md(cb(JSON.stringify(gpt.usage, null, 2))))
+            await ctx.answerText(md(cb(JSON.stringify(gpt.usage, null, 2))))
         } else if (botStrings.setRole.test(prompt)) {
             gpt.role = botStrings.setRole.sanitize(prompt)
-            ctx.answerText(gpt.role)
+            await ctx.answerText(gpt.role)
         } else if (botStrings.getRole.test(prompt)) {
-            ctx.answerText(gpt.role)
+            await ctx.answerText(gpt.role)
         } else if (botStrings.look.test(prompt)) {
             if (not(env.IMAGE_RECOGNITION)) {
-                ctx.replyText('Нет')
+                await ctx.replyText('Нет')
                 return
             } else {
-                tg.sendTyping(ctx.chat.id, 'typing')
+                await tg.sendTyping(ctx.chat.id, 'typing')
                 await addRepliedMessageContext()
                 const waitMessageP = ctx.replyText('Щас гляну!')
                 const result = await doLook(gpt, ctx, prompt)
                 await makeUpdateMessage(await waitMessageP)(result)
             }
         } else if (botStrings.draw.test(prompt)) {
-            tg.sendTyping(ctx.chat.id, 'typing')
+            await tg.sendTyping(ctx.chat.id, 'typing')
             if (botStrings.drawThis.test(prompt)) {
                 const repliedMessage = await getRepliedMessage(tg, ctx, true)
-                if (repliedMessage && repliedMessage.text) {
+                if (repliedMessage?.text) {
                     await doDraw(ctx,
                         [
                             repliedMessage.text,
@@ -108,22 +108,22 @@ dp.onNewMessage(
                             .join(', '),
                         gpt)
                 } else {
-                    ctx.answerText('Что именно требуется нарисовать?')
+                    await ctx.answerText('Что именно требуется нарисовать?')
                 }
             } else {
                 await doDraw(ctx, prompt, gpt)
             }
         } else {
-            tg.sendTyping(ctx.chat.id, 'typing')
+            await tg.sendTyping(ctx.chat.id, 'typing')
             await addRepliedMessageContext()
             const { content } = first((await gpt.query(prompt, getUsername(ctx.sender))).choices).message
             if (content) {
                 if (botStrings.speak.test(prompt)) {
-                    tg.sendTyping(ctx.chat.id, 'typing')
+                    await tg.sendTyping(ctx.chat.id, 'typing')
                     const voice = InputMedia.voice(new Uint8Array(await gpt.speak(content)))
                     await ctx.replyMedia(voice)
                 } else {
-                    ctx.answerText(md(content))
+                    await ctx.answerText(md(content))
                 }
             } else {
                 await ctx.replyText(makeFailureMessage())
@@ -142,7 +142,7 @@ tg.run({
     phone: () => tg.input('Phone > '),
     code: () => tg.input('Code > '),
     password: () => tg.input('Password > '),
-}, async (self) => {
+}, (self) => {
     console.log(`Logged in as ${self.username}`)
 })
 
@@ -157,7 +157,7 @@ async function doDraw(ctx: MessageContext, prompt: string, gpt: ChatGpt) {
         aspectRatio?.height ?? '1'
     )
     img.subscribe({
-        next: async (o) => {
+        next: async (o): Promise<void> => {
             if (o.done) {
                 await tg.deleteMessages([waitMessage])
                 const image = InputMedia.photo(
@@ -166,15 +166,11 @@ async function doDraw(ctx: MessageContext, prompt: string, gpt: ChatGpt) {
                 await ctx.replyMedia(image, { caption: prompt })
                 gpt.addUserContext(prompt, getUsername(ctx.sender))
             } else {
-                updateMessage(`Рисую ${o.i}`)
+                await updateMessage(`Рисую ${o.i}`)
             }
         },
         error: async (e) => {
-            if (typeof e === 'string') {
-                updateMessage(makeFailureMessage(e))
-            } else {
-                updateMessage(makeFailureMessage('совсем неожиданная ошибка'))
-            }
+            await updateMessage(makeFailureMessage(toError(e).message))
         },
     })
 }
