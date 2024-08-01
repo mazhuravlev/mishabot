@@ -149,7 +149,8 @@ export class Gpt {
             model: 'openai/gpt-4o-mini',
             n: 1,
             max_tokens: maxTokens,
-            temperature: this._temperature
+            temperature: this._temperature,
+            top_p: 0.5,
         }
         const completion: OpenAI.Chat.ChatCompletion = await this._openai.chat.completions.create(params)
         this.updateUsage(completion)

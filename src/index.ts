@@ -79,16 +79,22 @@ dp.onNewMessage(
     async (ctx: MessageContext) => {
         const chatId = getChatId(ctx)
         log.debug('UPD', chatId, ctx.sender.username, ctx.media?.type ?? 'none', ctx.text)
-        const gpt = getChatGpt(chatId)
         const prompt = removeMention(await getMessageText(tg, gpt, ctx))
         if (prompt === '') return
+        const gpt = getChatGpt(chatId)
+
         if (botStrings.status.test(prompt)) {
             await ctx.answerText(md(cb(JSON.stringify(gpt.usage, null, 2))))
         } else if (botStrings.moderation.test(prompt)) {
             await ctx.answerText(md(cb(JSON.stringify(await gpt.moderation(prompt)))))
         } else if (botStrings.setRole.test(prompt)) {
-            gpt.role = botStrings.setRole.sanitize(prompt)
-            await ctx.answerText(gpt.role)
+            const role = botStrings.setRole.sanitize(prompt)
+            if (role) {
+                gpt.role = role
+                await ctx.answerText(role)
+            } else {
+                await ctx.answerText('Какую роль установить?')
+            }
         } else if (botStrings.getRole.test(prompt)) {
             await ctx.answerText(gpt.role)
         } else if (botStrings.look.test(prompt)) {
