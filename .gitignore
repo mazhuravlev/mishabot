@@ -10,3 +10,4 @@ private/
 .env
 files
 localStorage
+key.json

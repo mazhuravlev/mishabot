@@ -7,41 +7,41 @@ export const iamToken = t.type({
 })
 
 export interface Completion {
-    result: Result;
+    result: Result
 }
 
 export interface Result {
-    alternatives: Alternative[];
-    usage: Usage;
-    modelVersion: string;
+    alternatives: Alternative[]
+    usage: Usage
+    modelVersion: string
 }
 
 export interface Alternative {
-    message: Message;
-    status: string;
+    message: Message
+    status: string
 }
 
 export interface Message {
-    role: 'user' | 'system' | 'assistant';
-    text: string;
+    role: 'user' | 'system' | 'assistant'
+    text: string
 }
 
 export interface Usage {
-    inputTextTokens: string;
-    completionTokens: string;
-    totalTokens: string;
+    inputTextTokens: string
+    completionTokens: string
+    totalTokens: string
 }
 
 export interface YandexGptPrompt {
-    modelUri: string;
-    completionOptions: CompletionOptions;
-    messages: Message[];
+    modelUri: string
+    completionOptions: CompletionOptions
+    messages: Message[]
 }
 
 export interface CompletionOptions {
-    stream: boolean;
-    temperature: number;
-    maxTokens: string;
+    stream: boolean
+    temperature: number
+    maxTokens: string
 }
 
 export const imageResponseType = t.union([
@@ -71,4 +71,16 @@ export const imageGenerationResponse = t.union([
 
 export type ImageGenerationResponse = t.TypeOf<typeof imageGenerationResponse>
 
-export type ImageReturn = { done: false, i: number } | { done: true, image?: string }
+export type ImageReturn =
+    | { done: false; i: number }
+    | { done: true; image?: string }
+
+export type YandexKey = t.TypeOf<typeof yandexKeyType>
+export const yandexKeyType = t.type({
+    id: t.string,
+    service_account_id: t.string,
+    created_at: t.string,
+    key_algorithm: t.string,
+    public_key: t.string,
+    private_key: t.string,
+})

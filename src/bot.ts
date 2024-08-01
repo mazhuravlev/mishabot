@@ -1,9 +1,13 @@
-import { MessageContext } from "@mtcute/dispatcher"
-import Openai from "./openai/index.js"
-import { assertDefined, assertNonEmptyString, first, last } from "./func.js"
-import { TelegramClient } from "@mtcute/node"
+import { MessageContext } from '@mtcute/dispatcher'
+import Openai from './openai/index.js'
+import { assertDefined, assertNonEmptyString, first, last } from './func.js'
+import { TelegramClient } from '@mtcute/node'
 
-export const removeMention = (msg: string) => msg.trim().replace(/^\s*@\w+[\s,]*/, '').trim()
+export const removeMention = (msg: string) =>
+    msg
+        .trim()
+        .replace(/^\s*@\w+[\s,]*/, '')
+        .trim()
 
 export const makeFailureMessage = (e?: string) => {
     return e ? `Не получилось 😢: ${e}` : 'Не получилось 😢'
@@ -30,10 +34,19 @@ export async function makeExcerpt(gpt: Openai.Gpt, apply: boolean) {
     return first(answer.choices).message
 }
 
-export async function getRepliedMessage(tg: TelegramClient, upd: MessageContext, includeBotMessage = false) {
+export async function getRepliedMessage(
+    tg: TelegramClient,
+    upd: MessageContext,
+    includeBotMessage = false
+) {
     if (upd.replyToMessage?.id) {
-        const originalMessage = assertDefined(first(await tg.getMessages(upd.chat.id, [upd.replyToMessage.id])))
-        const includeMessage = originalMessage.text && (includeBotMessage || (originalMessage.sender.username !== await tg.getMyUsername()))
+        const originalMessage = assertDefined(
+            first(await tg.getMessages(upd.chat.id, [upd.replyToMessage.id]))
+        )
+        const includeMessage =
+            originalMessage.text &&
+            (includeBotMessage ||
+                originalMessage.sender.username !== (await tg.getMyUsername()))
         if (includeMessage) {
             return originalMessage
         } else {
@@ -44,9 +57,9 @@ export async function getRepliedMessage(tg: TelegramClient, upd: MessageContext,
     }
 }
 
-const setRoleRegex = /^установи роль[^А-яA-z]*/ui
-const drawThisRegex = /^нарисуй это[^А-яA-z]*/ui
-const aspectRatioRegex = /\b(\d+\/\d+)\b/ug
+const setRoleRegex = /^установи роль[^А-яA-z]*/iu
+const drawThisRegex = /^нарисуй это[^А-яA-z]*/iu
+const aspectRatioRegex = /\b(\d+\/\d+)\b/gu
 export const botStrings = {
     status: {
         test: (s: string) => /^статус/i.test(s),
@@ -87,5 +100,5 @@ export const botStrings = {
         regex: /модерация\s+/,
         test: (s: string) => botStrings.moderation.regex.test(s),
         sanitize: (s: string) => s.replace(botStrings.moderation.regex, ''),
-    }
+    },
 }

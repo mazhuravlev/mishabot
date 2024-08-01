@@ -5,20 +5,34 @@ import Koa from 'koa'
 import serve from 'koa-static'
 import env from './env.js'
 import sharp from 'sharp'
-import { assertDefined, cb, first, not, toError } from './func.js'
-import { getRepliedMessage, makeFailureMessage, removeMention, botStrings } from './bot.js'
-import { getChatId, makeUpdateMessage as _makeUpdateMessage, makeIsAllowedMsg, getMessagePhoto, getMessageText, getUsername } from './mtcute.js'
-import { Logger } from "tslog"
+import { assertDefined, cb, decode, first, not, toError } from './func.js'
+import {
+    getRepliedMessage,
+    makeFailureMessage,
+    removeMention,
+    botStrings,
+} from './bot.js'
+import {
+    getChatId,
+    makeUpdateMessage as _makeUpdateMessage,
+    makeIsAllowedMsg,
+    getMessagePhoto,
+    getMessageText,
+    getUsername,
+} from './mtcute.js'
+import { Logger } from 'tslog'
 import { AppLogger } from './types.js'
 import Openai from './openai/index.js'
 import Yandex from './yandex/index.js'
+import { readFile } from 'node:fs/promises'
+import { yandexKeyType } from './yandex/types.js'
 
 const log: AppLogger = new Logger()
 
 const app = new Koa()
 app.use(serve('files', {}))
 app.listen(8080)
-const url = await ngrok.connect({ proto: 'http', addr: 8080 });
+const url = await ngrok.connect({ proto: 'http', addr: 8080 })
 
 const tg = new TelegramClient({
     apiId: env.API_ID,
@@ -31,7 +45,11 @@ const tg = new TelegramClient({
 })
 const makeUpdateMessage = _makeUpdateMessage(tg)
 
-const yandexAuth = new Yandex.Auth(log)
+const yandexKeyJson: unknown = JSON.parse(
+    await readFile(new URL('../key.json', import.meta.url), 'utf8')
+)
+const yandexKey = decode(yandexKeyType)(yandexKeyJson)
+const yandexAuth = new Yandex.Auth(yandexKey, log)
 const yandexGptPool = new Map<string, Yandex.Gpt>()
 const getYandexGpt = (msg: MessageContext) => {
     const id = getChatId(msg)
@@ -39,7 +57,12 @@ const getYandexGpt = (msg: MessageContext) => {
     if (yandexGpt) {
         return yandexGpt
     } else {
-        const newYandexGpt = new Yandex.Gpt(id, env.YANDEX_FOLDER_ID, () => yandexAuth.iamToken, 'yandexgpt')
+        const newYandexGpt = new Yandex.Gpt(
+            id,
+            env.YANDEX_FOLDER_ID,
+            () => yandexAuth.iamToken,
+            'yandexgpt'
+        )
         yandexGptPool.set(id, newYandexGpt)
         log.info(`Add new YandexGPT '${newYandexGpt.model}' for chat id ${id}`)
         return newYandexGpt
@@ -57,7 +80,7 @@ const getChatGpt = (chatId: string) => {
             log,
             env.OPENAI_API_KEY,
             env.OPENAI_BASE_URL,
-            env.GPT_DEFAULT_SYSTEM_ROLE,
+            env.GPT_DEFAULT_SYSTEM_ROLE
         )
         gptPool.set(chatId, newChatGpt)
         log.info(`Add new ChatGpt for chat id ${chatId}`)
@@ -68,97 +91,110 @@ const getChatGpt = (chatId: string) => {
 const dp = Dispatcher.for(tg)
 const isAllowedMsg = makeIsAllowedMsg(tg)
 
-dp.onMessageGroup(
-    isAllowedMsg,
-    async (upd) => {
-        await upd.replyText('Ого, вот это да!')
-    })
+dp.onMessageGroup(isAllowedMsg, async (upd) => {
+    await upd.replyText('Ого, вот это да!')
+})
 
-dp.onNewMessage(
-    isAllowedMsg,
-    async (ctx: MessageContext) => {
-        const chatId = getChatId(ctx)
-        log.debug('UPD', chatId, ctx.sender.username, ctx.media?.type ?? 'none', ctx.text)
-        const prompt = removeMention(await getMessageText(tg, gpt, ctx))
-        if (prompt === '') return
-        const gpt = getChatGpt(chatId)
+dp.onNewMessage(isAllowedMsg, async (ctx: MessageContext) => {
+    const chatId = getChatId(ctx)
+    log.debug(
+        'UPD',
+        chatId,
+        ctx.sender.username,
+        ctx.media?.type ?? 'none',
+        ctx.text
+    )
+    const gpt = getChatGpt(chatId)
+    const prompt = removeMention(await getMessageText(tg, gpt, ctx))
+    if (prompt === '') return
 
-        if (botStrings.status.test(prompt)) {
-            await ctx.answerText(md(cb(JSON.stringify(gpt.usage, null, 2))))
-        } else if (botStrings.moderation.test(prompt)) {
-            await ctx.answerText(md(cb(JSON.stringify(await gpt.moderation(prompt)))))
-        } else if (botStrings.setRole.test(prompt)) {
-            const role = botStrings.setRole.sanitize(prompt)
-            if (role) {
-                gpt.role = role
-                await ctx.answerText(role)
-            } else {
-                await ctx.answerText('Какую роль установить?')
-            }
-        } else if (botStrings.getRole.test(prompt)) {
-            await ctx.answerText(gpt.role)
-        } else if (botStrings.look.test(prompt)) {
-            if (not(env.IMAGE_RECOGNITION)) {
-                await ctx.replyText('Нет')
-                return
-            } else {
-                await tg.sendTyping(ctx.chat.id, 'typing')
-                await addRepliedMessageContext()
-                const waitMessageP = ctx.replyText('Щас гляну!')
-                const result = await doLook(gpt, ctx, prompt)
-                await makeUpdateMessage(await waitMessageP)(result)
-            }
-        } else if (botStrings.draw.test(prompt)) {
-            await tg.sendTyping(ctx.chat.id, 'typing')
-            if (botStrings.drawThis.test(prompt)) {
-                const repliedMessage = await getRepliedMessage(tg, ctx, true)
-                if (repliedMessage?.text) {
-                    await doDraw(ctx,
-                        [
-                            repliedMessage.text,
-                            botStrings.drawThis.sanitize(prompt)
-                        ]
-                            .filter(x => x.length > 0)
-                            .join(', '),
-                        gpt)
-                } else {
-                    await ctx.answerText('Что именно требуется нарисовать?')
-                }
-            } else {
-                await doDraw(ctx, prompt, gpt)
-            }
+    if (botStrings.status.test(prompt)) {
+        await ctx.answerText(md(cb(JSON.stringify(gpt.usage, null, 2))))
+    } else if (botStrings.moderation.test(prompt)) {
+        await ctx.answerText(
+            md(cb(JSON.stringify(await gpt.moderation(prompt))))
+        )
+    } else if (botStrings.setRole.test(prompt)) {
+        const role = botStrings.setRole.sanitize(prompt)
+        if (role) {
+            gpt.role = role
+            await ctx.answerText(role)
+        } else {
+            await ctx.answerText('Какую роль установить?')
+        }
+    } else if (botStrings.getRole.test(prompt)) {
+        await ctx.answerText(gpt.role)
+    } else if (botStrings.look.test(prompt)) {
+        if (not(env.IMAGE_RECOGNITION)) {
+            await ctx.replyText('Нет')
+            return
         } else {
             await tg.sendTyping(ctx.chat.id, 'typing')
             await addRepliedMessageContext()
-            const { content } = first((await gpt.query(prompt, getUsername(ctx.sender))).choices).message
-            if (content) {
-                if (botStrings.speak.test(prompt)) {
-                    await tg.sendTyping(ctx.chat.id, 'typing')
-                    const voice = InputMedia.voice(new Uint8Array(await gpt.speak(content)))
-                    await ctx.replyMedia(voice)
-                } else {
-                    await ctx.answerText(md(content))
-                }
+            const waitMessageP = ctx.replyText('Щас гляну!')
+            const result = await doLook(gpt, ctx, prompt)
+            await makeUpdateMessage(await waitMessageP)(result)
+        }
+    } else if (botStrings.draw.test(prompt)) {
+        await tg.sendTyping(ctx.chat.id, 'typing')
+        if (botStrings.drawThis.test(prompt)) {
+            const repliedMessage = await getRepliedMessage(tg, ctx, true)
+            if (repliedMessage?.text) {
+                await doDraw(
+                    ctx,
+                    [repliedMessage.text, botStrings.drawThis.sanitize(prompt)]
+                        .filter((x) => x.length > 0)
+                        .join(', '),
+                    gpt
+                )
             } else {
-                await ctx.replyText(makeFailureMessage())
+                await ctx.answerText('Что именно требуется нарисовать?')
             }
+        } else {
+            await doDraw(ctx, prompt, gpt)
         }
-
-        async function addRepliedMessageContext() {
-            const repliedMessage = await getRepliedMessage(tg, ctx)
-            if (repliedMessage) {
-                gpt.addUserContext(repliedMessage.text, getUsername(repliedMessage.sender))
+    } else {
+        await tg.sendTyping(ctx.chat.id, 'typing')
+        await addRepliedMessageContext()
+        const { content } = first(
+            (await gpt.query(prompt, getUsername(ctx.sender))).choices
+        ).message
+        if (content) {
+            if (botStrings.speak.test(prompt)) {
+                await tg.sendTyping(ctx.chat.id, 'typing')
+                const voice = InputMedia.voice(
+                    new Uint8Array(await gpt.speak(content))
+                )
+                await ctx.replyMedia(voice)
+            } else {
+                await ctx.answerText(md(content))
             }
+        } else {
+            await ctx.replyText(makeFailureMessage())
         }
-    })
+    }
 
-tg.run({
-    phone: () => tg.input('Phone > '),
-    code: () => tg.input('Code > '),
-    password: () => tg.input('Password > '),
-}, (self) => {
-    console.log(`Logged in as ${self.username}`)
+    async function addRepliedMessageContext() {
+        const repliedMessage = await getRepliedMessage(tg, ctx)
+        if (repliedMessage) {
+            gpt.addUserContext(
+                repliedMessage.text,
+                getUsername(repliedMessage.sender)
+            )
+        }
+    }
 })
+
+tg.run(
+    {
+        phone: () => tg.input('Phone > '),
+        code: () => tg.input('Code > '),
+        password: () => tg.input('Password > '),
+    },
+    (self) => {
+        console.log(`Logged in as ${self.username}`)
+    }
+)
 
 async function doDraw(ctx: MessageContext, prompt: string, gpt: Openai.Gpt) {
     const waitMessage = await ctx.replyText('Щас нарисую!')
@@ -176,7 +212,8 @@ async function doDraw(ctx: MessageContext, prompt: string, gpt: Openai.Gpt) {
                 await tg.deleteMessages([waitMessage])
                 const image = InputMedia.photo(
                     Buffer.from(assertDefined(o.image), 'base64'),
-                    { fileMime: 'image/jpeg' })
+                    { fileMime: 'image/jpeg' }
+                )
                 await ctx.replyMedia(image, { caption: prompt })
                 gpt.addUserContext(prompt, getUsername(ctx.sender))
             } else {
@@ -195,9 +232,16 @@ async function doLook(gpt: Openai.Gpt, msg: MessageContext, prompt: string) {
         const filename = photo.fileId + '.jpg'
         const imgPath = (f: string) => `files/${f}`
         await tg.downloadToFile(imgPath(filename), photo)
-        await sharp(imgPath(filename)).resize(512, 512).toFile(imgPath(`512_${filename}`))
-        const imageResponse = await gpt.lookAtImage(prompt, `${url}/512_${filename}`)
-        return first(imageResponse.choices).message.content ?? makeFailureMessage()
+        await sharp(imgPath(filename))
+            .resize(512, 512)
+            .toFile(imgPath(`512_${filename}`))
+        const imageResponse = await gpt.lookAtImage(
+            prompt,
+            `${url}/512_${filename}`
+        )
+        return (
+            first(imageResponse.choices).message.content ?? makeFailureMessage()
+        )
     } else {
         return `Нечего глядеть ${Math.random() > 0.5 ? '🧐' : '🤔'}?`
     }

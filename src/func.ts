@@ -1,5 +1,5 @@
 import { isLeft } from 'fp-ts/lib/Either.js'
-import { failure } from "io-ts/lib/PathReporter.js"
+import { failure } from 'io-ts/lib/PathReporter.js'
 import t from 'io-ts'
 
 export const assertDefined = <T>(x: T | undefined | null): T => {
@@ -28,21 +28,24 @@ export const last = <T>(array: T[]) => {
 }
 
 export const assertNonEmptyString = (s: unknown) => {
-    if (typeof s !== 'string' || s.length === 0) throw new Error('assertNonEmptyString')
+    if (typeof s !== 'string' || s.length === 0)
+        throw new Error('assertNonEmptyString')
 }
 
 /**
  * Add code backticks for Telegram
  * @param s input string
- * @returns 
+ * @returns
  */
 export const cb = (s: string) => '```\n' + s + '```'
 
-export const decode = <T>(type: t.Type<T>) => (value: unknown): T => {
-    const v = type.decode(value)
-    if (isLeft(v)) {
-        throw new Error(failure(v.left).join('\n'))
-    } else {
-        return v.right
+export const decode =
+    <T>(type: t.Type<T>) =>
+    (value: unknown): T => {
+        const v = type.decode(value)
+        if (isLeft(v)) {
+            throw new Error(failure(v.left).join('\n'))
+        } else {
+            return v.right
+        }
     }
-}

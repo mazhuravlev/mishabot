@@ -1,3 +1,3 @@
-import { ILogObj, Logger } from "tslog"
+import { ILogObj, Logger } from 'tslog'
 
 export type AppLogger = Logger<ILogObj>

@@ -1,10 +1,10 @@
-import OpenAI, { toFile } from "openai"
-import { decode, first } from "../func.js"
+import OpenAI, { toFile } from 'openai'
+import { decode } from '../func.js'
 import { LocalStorage } from 'node-localstorage'
-import { Subject } from "rxjs"
-import { AppLogger } from "../types.js"
-import { ChatLogRecord, storageType, StorageType } from "./types.js"
-import { toChatLog } from "../mtcute.js"
+import { Subject } from 'rxjs'
+import { AppLogger } from '../types.js'
+import { ChatLogRecord, storageType, StorageType } from './types.js'
+import { toChatLog } from '../mtcute.js'
 
 const maxTokens = 1000
 const usageCheckIntervalMinutes = 1
@@ -25,7 +25,7 @@ export class Gpt {
         private _log: AppLogger,
         openAiKey: string,
         openAiBaseUrl: string,
-        defaultSystemRole: string,
+        defaultSystemRole: string
     ) {
         this._systemRole = defaultSystemRole
         this._openai = new OpenAI({
@@ -34,25 +34,31 @@ export class Gpt {
         })
         this._storage = new LocalStorage(`localStorage/gpt_${this._id}`)
         this.loadState()
-        this._excerptIntervalId = setInterval(async () => {
-            if (!this._usage) return
-            if (this._usage.prompt_tokens > excerptTokenThreshold) {
-                _log.info('make excerpt', this._id)
-                this._excerptSubject.next(this._usage)
-                await this.exerpt(true)
-            }
-        }, usageCheckIntervalMinutes * 60 * 1000)
+        this._excerptIntervalId = setInterval(
+            () => this.checkUsage(),
+            usageCheckIntervalMinutes * 60 * 1000
+        )
     }
 
-    public get id() { return this._id }
+    public get id() {
+        return this._id
+    }
 
-    public get usage() { return this._usage }
+    public get usage() {
+        return this._usage
+    }
 
-    public get logSize() { return this._chatLog.length }
+    public get logSize() {
+        return this._chatLog.length
+    }
 
-    public get excerptObservable() { return this._excerptSubject.asObservable() }
+    public get excerptObservable() {
+        return this._excerptSubject.asObservable()
+    }
 
-    public get role(): string { return this._systemRole }
+    public get role(): string {
+        return this._systemRole
+    }
 
     public set role(role: string) {
         this._systemRole = role
@@ -75,7 +81,9 @@ export class Gpt {
     }
 
     public async exerpt(apply: boolean) {
-        const completion = await this._query('Сделай подробную выжимку из нашей беседы')
+        const completion = await this._query(
+            'Сделай подробную выжимку из нашей беседы'
+        )
         if (apply) {
             this.pushLog(completion)
         }
@@ -90,18 +98,21 @@ export class Gpt {
                 { role: 'system', content: this._systemRole },
                 ...this._chatLog,
                 {
-                    role: 'user', content: [
+                    role: 'user',
+                    content: [
                         { type: 'text', text: prompt },
-                        { type: 'image_url', image_url: { url: imageUrl, detail: 'low' } }
-                    ]
-                }
+                        {
+                            type: 'image_url',
+                            image_url: { url: imageUrl, detail: 'low' },
+                        },
+                    ],
+                },
             ],
             model: 'openai/gpt-4o-mini',
             n: 1,
             max_tokens: maxTokens,
             temperature: this._temperature,
         }
-        this._openai.moderations
         const completion = await this._openai.chat.completions.create(params)
         this.pushLog(completion)
         this.updateUsage(completion)
@@ -136,7 +147,7 @@ export class Gpt {
     }
 
     private pushLog(completion: OpenAI.Chat.Completions.ChatCompletion) {
-        toChatLog(completion)?.map(x => this._chatLog.push(x))
+        toChatLog(completion)?.map((x) => this._chatLog.push(x))
     }
 
     private async _query(prompt: string) {
@@ -144,7 +155,7 @@ export class Gpt {
             messages: [
                 { role: 'system', content: this._systemRole },
                 ...this._chatLog,
-                { role: 'user', content: prompt }
+                { role: 'user', content: prompt },
             ],
             model: 'openai/gpt-4o-mini',
             n: 1,
@@ -152,14 +163,25 @@ export class Gpt {
             temperature: this._temperature,
             top_p: 0.5,
         }
-        const completion: OpenAI.Chat.ChatCompletion = await this._openai.chat.completions.create(params)
+        const completion: OpenAI.Chat.ChatCompletion =
+            await this._openai.chat.completions.create(params)
         this.updateUsage(completion)
         return completion
     }
 
+    private checkUsage() {
+        if (!this._usage) return
+        if (this._usage.prompt_tokens > excerptTokenThreshold) {
+            this._excerptSubject.next(this._usage)
+            this.exerpt(true)
+                .then(() => this._log.info('make excerpt', this._id))
+                .catch((e) => this._log.error(e))
+        }
+    }
+
     private updateUsage(completion: OpenAI.Chat.Completions.ChatCompletion) {
         if (completion.usage) {
-            this._usage = completion.usage;
+            this._usage = completion.usage
         }
     }
 

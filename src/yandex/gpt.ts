@@ -1,8 +1,14 @@
-import { Observable, throwError } from "rxjs"
-import { decode, first, resToJson } from "../func.js"
-import { pipe } from "fp-ts/lib/function.js"
-import { fold } from "fp-ts/lib/Either.js"
-import { Completion, imageGenerationResponse, imageResponseType, ImageReturn, Message } from "./types.js"
+import { Observable, throwError } from 'rxjs'
+import { decode, first, resToJson } from '../func.js'
+import { pipe } from 'fp-ts/lib/function.js'
+import { fold } from 'fp-ts/lib/Either.js'
+import {
+    Completion,
+    imageGenerationResponse,
+    imageResponseType,
+    ImageReturn,
+    Message,
+} from './types.js'
 
 export class Gpt {
     private _temperature = 0.5
@@ -15,12 +21,15 @@ export class Gpt {
         private _id: string,
         private _folderId: string,
         private _getIamToken: () => string,
-        private _model: 'yandexgpt' | 'yandexgpt-lite',
-    ) {
-    }
+        private _model: 'yandexgpt' | 'yandexgpt-lite'
+    ) {}
 
-    public get id() { return this._id }
-    public get model() { return this._model }
+    public get id() {
+        return this._id
+    }
+    public get model() {
+        return this._model
+    }
 
     public async query(query: string): Promise<Completion> {
         const prompt = {
@@ -32,25 +41,30 @@ export class Gpt {
             },
             messages: [
                 {
-                    role: "system",
-                    text: this._systemRole
+                    role: 'system',
+                    text: this._systemRole,
                 },
                 ...this._chatLog,
                 {
-                    role: "user",
-                    text: query
+                    role: 'user',
+                    text: query,
                 },
-            ]
+            ],
         }
-        const response = await fetch('https://llm.api.cloud.yandex.net/foundationModels/v1/completion', {
-            method: 'post',
-            body: JSON.stringify(prompt),
-            headers: this.yandexHeaders()
-        })
-        const completion = await response.json() as Completion
+        const response = await fetch(
+            'https://llm.api.cloud.yandex.net/foundationModels/v1/completion',
+            {
+                method: 'post',
+                body: JSON.stringify(prompt),
+                headers: this.yandexHeaders(),
+            }
+        )
+        const completion = (await response.json()) as Completion
         this._chatLog.push({ role: 'user', text: query })
         this._chatLog.push(first(completion.result.alternatives).message)
-        console.log(`[ygpt ${this._id}] Tokens: ${completion.result.usage.totalTokens}`)
+        console.log(
+            `[ygpt ${this._id}] Tokens: ${completion.result.usage.totalTokens}`
+        )
         return completion
     }
 
@@ -58,12 +72,16 @@ export class Gpt {
         return {
             'Content-Type': 'application/json',
             'x-folder-id': this._folderId,
-            'Authorization': `Bearer ${this._getIamToken()}`,
+            Authorization: `Bearer ${this._getIamToken()}`,
             'Accept-Language': 'en-US,en;q=0.9,ru;q=1',
         }
     }
 
-    public async drawImage(prompt: string, widthRatio: string, heightRatio: string): Promise<Observable<ImageReturn>> {
+    public async drawImage(
+        prompt: string,
+        widthRatio: string,
+        heightRatio: string
+    ): Promise<Observable<ImageReturn>> {
         const query = {
             modelUri: `art://${this._folderId}/yandex-art/latest`,
             generationOptions: {
@@ -71,47 +89,61 @@ export class Gpt {
                 aspectRatio: {
                     widthRatio,
                     heightRatio,
-                }
+                },
             },
             messages: [
                 {
-                    weight: "1",
-                    text: prompt
-                }
-            ]
+                    weight: '1',
+                    text: prompt,
+                },
+            ],
         }
 
         try {
-            const response = await fetch('https://llm.api.cloud.yandex.net/foundationModels/v1/imageGenerationAsync', {
-            method: 'post',
-            headers: this.yandexHeaders(),
-            body: JSON.stringify(query)
-        })
-            const imageResponse = decode(imageResponseType)(await response.json())
+            const response = await fetch(
+                'https://llm.api.cloud.yandex.net/foundationModels/v1/imageGenerationAsync',
+                {
+                    method: 'post',
+                    headers: this.yandexHeaders(),
+                    body: JSON.stringify(query),
+                }
+            )
+            const imageResponse = decode(imageResponseType)(
+                await response.json()
+            )
             if ('error' in imageResponse) {
                 return throwError(() => imageResponse.message)
             } else {
-            return new Observable<ImageReturn>(observer => {
-                let i = 1
-                const interval = setInterval(async () => {
-                    const response: unknown = await fetch(`https://llm.api.cloud.yandex.net:443/operations/${imageResponse.id}`,
-                        { headers: this.yandexHeaders() }).then(resToJson)
-                    pipe(imageGenerationResponse.decode(response), fold(
-                        e => {
-                            clearInterval(interval)
-                            console.error(e)
-                            observer.error('неожиданная ошибка')
-                        },
-                        res => {
-                            if (res.done) {
-                                observer.next({ done: true, image: res.response.image })
-                                observer.complete()
-                            } else {
-                                observer.next({ done: false, i: i++ })
-                            }
-                        }))
-                }, 3000)
-            })
+                return new Observable<ImageReturn>((observer) => {
+                    let i = 1
+                    const interval = setInterval(async () => {
+                        const response: unknown = await fetch(
+                            `https://llm.api.cloud.yandex.net:443/operations/${imageResponse.id}`,
+                            { headers: this.yandexHeaders() }
+                        ).then(resToJson)
+                        pipe(
+                            imageGenerationResponse.decode(response),
+                            fold(
+                                (e) => {
+                                    clearInterval(interval)
+                                    console.error(e)
+                                    observer.error('неожиданная ошибка')
+                                },
+                                (res) => {
+                                    if (res.done) {
+                                        observer.next({
+                                            done: true,
+                                            image: res.response.image,
+                                        })
+                                        observer.complete()
+                                    } else {
+                                        observer.next({ done: false, i: i++ })
+                                    }
+                                }
+                            )
+                        )
+                    }, 3000)
+                })
             }
         } catch (e) {
             return throwError(() => e)
