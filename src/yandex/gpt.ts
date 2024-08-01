@@ -63,7 +63,7 @@ export class Gpt {
         }
     }
 
-    public async image(prompt: string, widthRatio: string, heightRatio: string): Promise<Observable<ImageReturn>> {
+    public async drawImage(prompt: string, widthRatio: string, heightRatio: string): Promise<Observable<ImageReturn>> {
         const query = {
             modelUri: `art://${this._folderId}/yandex-art/latest`,
             generationOptions: {

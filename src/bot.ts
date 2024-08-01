@@ -1,5 +1,5 @@
 import { MessageContext } from "@mtcute/dispatcher"
-import { ChatGpt } from "./chatGpt.js"
+import Openai from "./openai/index.js"
 import { assertDefined, assertNonEmptyString, first, last } from "./func.js"
 import { TelegramClient } from "@mtcute/node"
 
@@ -25,7 +25,7 @@ export const parseRoleCmd = (msg: string) => {
     }
 }
 
-export async function makeExcerpt(gpt: ChatGpt, apply: boolean) {
+export async function makeExcerpt(gpt: Openai.Gpt, apply: boolean) {
     const answer = await gpt.exerpt(apply)
     return first(answer.choices).message
 }
@@ -82,5 +82,10 @@ export const botStrings = {
             }
         },
         sanitize: (s: string) => s.replace(aspectRatioRegex, ''),
+    },
+    moderation: {
+        regex: /модерация\s+/,
+        test: (s: string) => botStrings.moderation.regex.test(s),
+        sanitize: (s: string) => s.replace(botStrings.moderation.regex, ''),
     }
 }

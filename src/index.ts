@@ -8,9 +8,9 @@ import sharp from 'sharp'
 import { assertDefined, cb, first, not, toError } from './func.js'
 import { getRepliedMessage, makeFailureMessage, removeMention, botStrings } from './bot.js'
 import { getChatId, makeUpdateMessage as _makeUpdateMessage, makeIsAllowedMsg, getMessagePhoto, getMessageText, getUsername } from './mtcute.js'
-import { ChatGpt } from './chatGpt.js'
 import { Logger } from "tslog"
 import { AppLogger } from './types.js'
+import Openai from './openai/index.js'
 import Yandex from './yandex/index.js'
 
 const log: AppLogger = new Logger()
@@ -46,13 +46,19 @@ const getYandexGpt = (msg: MessageContext) => {
     }
 }
 
-const gptPool = new Map<string, ChatGpt>()
-const getChatGpt = (msg: MessageContext, chatId: string) => {
+const gptPool = new Map<string, Openai.Gpt>()
+const getChatGpt = (chatId: string) => {
     const chatGpt = gptPool.get(chatId)
     if (chatGpt) {
         return chatGpt
     } else {
-        const newChatGpt = new ChatGpt(chatId, log, env.OPENAI_API_KEY, env.OPENAI_BASE_URL, env.GPT_DEFAULT_SYSTEM_ROLE)
+        const newChatGpt = new Openai.Gpt(
+            chatId,
+            log,
+            env.OPENAI_API_KEY,
+            env.OPENAI_BASE_URL,
+            env.GPT_DEFAULT_SYSTEM_ROLE,
+        )
         gptPool.set(chatId, newChatGpt)
         log.info(`Add new ChatGpt for chat id ${chatId}`)
         return newChatGpt
@@ -73,11 +79,13 @@ dp.onNewMessage(
     async (ctx: MessageContext) => {
         const chatId = getChatId(ctx)
         log.debug('UPD', chatId, ctx.sender.username, ctx.media?.type ?? 'none', ctx.text)
-        const gpt = getChatGpt(ctx, chatId)
+        const gpt = getChatGpt(chatId)
         const prompt = removeMention(await getMessageText(tg, gpt, ctx))
         if (prompt === '') return
         if (botStrings.status.test(prompt)) {
             await ctx.answerText(md(cb(JSON.stringify(gpt.usage, null, 2))))
+        } else if (botStrings.moderation.test(prompt)) {
+            await ctx.answerText(md(cb(JSON.stringify(await gpt.moderation(prompt)))))
         } else if (botStrings.setRole.test(prompt)) {
             gpt.role = botStrings.setRole.sanitize(prompt)
             await ctx.answerText(gpt.role)
@@ -146,12 +154,12 @@ tg.run({
     console.log(`Logged in as ${self.username}`)
 })
 
-async function doDraw(ctx: MessageContext, prompt: string, gpt: ChatGpt) {
+async function doDraw(ctx: MessageContext, prompt: string, gpt: Openai.Gpt) {
     const waitMessage = await ctx.replyText('Щас нарисую!')
     const updateMessage = makeUpdateMessage(waitMessage)
     const yGpt = getYandexGpt(ctx)
     const aspectRatio = botStrings.aspectRatio.get(ctx.text)
-    const img = await yGpt.image(
+    const img = await yGpt.drawImage(
         botStrings.aspectRatio.sanitize(ctx.text),
         aspectRatio?.width ?? '1',
         aspectRatio?.height ?? '1'
@@ -175,14 +183,14 @@ async function doDraw(ctx: MessageContext, prompt: string, gpt: ChatGpt) {
     })
 }
 
-async function doLook(gpt: ChatGpt, msg: MessageContext, prompt: string) {
+async function doLook(gpt: Openai.Gpt, msg: MessageContext, prompt: string) {
     const photo = await getMessagePhoto(tg, msg)
     if (photo) {
         const filename = photo.fileId + '.jpg'
         const imgPath = (f: string) => `files/${f}`
         await tg.downloadToFile(imgPath(filename), photo)
-        await sharp(imgPath(filename)).resize(256, 256).toFile(imgPath(`256_${filename}`))
-        const imageResponse = await gpt.lookAtImage(prompt, `${url}/256_${filename}`)
+        await sharp(imgPath(filename)).resize(512, 512).toFile(imgPath(`512_${filename}`))
+        const imageResponse = await gpt.lookAtImage(prompt, `${url}/512_${filename}`)
         return first(imageResponse.choices).message.content ?? makeFailureMessage()
     } else {
         return `Нечего глядеть ${Math.random() > 0.5 ? '🧐' : '🤔'}?`

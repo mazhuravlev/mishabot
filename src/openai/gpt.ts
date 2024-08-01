@@ -1,21 +1,16 @@
 import OpenAI, { toFile } from "openai"
-import { decode, first } from "./func.js"
+import { decode, first } from "../func.js"
 import { LocalStorage } from 'node-localstorage'
-import t from 'io-ts'
 import { Subject } from "rxjs"
-import { AppLogger } from "./types.js"
+import { AppLogger } from "../types.js"
+import { ChatLogRecord, storageType, StorageType } from "./types.js"
+import { toChatLog } from "../mtcute.js"
 
 const maxTokens = 1000
 const usageCheckIntervalMinutes = 1
 const excerptTokenThreshold = 2000
 
-interface ChatLogRecord {
-    role: 'user' | 'assistant' | 'system'
-    content: string
-    name?: string
-}
-
-export class ChatGpt {
+export class Gpt {
     private _temperature = 1
     private _chatLog: ChatLogRecord[] = []
     private _systemRole: string
@@ -72,6 +67,13 @@ export class ChatGpt {
         return completion
     }
 
+    public async moderation(input: string) {
+        return await this._openai.moderations.create({
+            input,
+            model: 'text-moderation-latest',
+        })
+    }
+
     public async exerpt(apply: boolean) {
         const completion = await this._query('Сделай подробную выжимку из нашей беседы')
         if (apply) {
@@ -90,7 +92,7 @@ export class ChatGpt {
                 {
                     role: 'user', content: [
                         { type: 'text', text: prompt },
-                        { type: 'image_url', image_url: { url: imageUrl } }
+                        { type: 'image_url', image_url: { url: imageUrl, detail: 'low' } }
                     ]
                 }
             ],
@@ -99,6 +101,7 @@ export class ChatGpt {
             max_tokens: maxTokens,
             temperature: this._temperature,
         }
+        this._openai.moderations
         const completion = await this._openai.chat.completions.create(params)
         this.pushLog(completion)
         this.updateUsage(completion)
@@ -184,44 +187,5 @@ export class ChatGpt {
             usage: this._usage,
         }
         this._storage.setItem('state.json', JSON.stringify(state))
-    }
-}
-
-const roleType = t.union([t.literal('system'), t.literal('assistant'), t.literal('user')])
-const storageType = t.type({
-    systemRole: t.string,
-    chatLog: t.array(t.union([
-        t.type({
-            role: roleType,
-            content: t.string,
-        }),
-        t.type({
-            role: roleType,
-            content: t.string,
-            name: t.string,
-        })
-    ])),
-    usage: t.union([
-        t.undefined,
-        t.type({
-            completion_tokens: t.number,
-            prompt_tokens: t.number,
-            total_tokens: t.number,
-        })
-    ])
-})
-
-type StorageType = t.TypeOf<typeof storageType>
-
-function toChatLog(completion: OpenAI.Chat.Completions.ChatCompletion) {
-    const c = first(completion.choices)
-    const { role, content } = c.message
-    if (content) {
-        return {
-            map: (f: (x: ChatLogRecord) => void) => f({
-                role,
-                content,
-            })
-        }
     }
 }

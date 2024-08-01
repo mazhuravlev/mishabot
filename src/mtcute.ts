@@ -1,7 +1,9 @@
 import { UpdateFilter, MessageContext } from "@mtcute/dispatcher"
 import { Message, Peer, TelegramClient } from "@mtcute/node"
-import { assertDefined } from "./func.js"
-import { ChatGpt } from "./chatGpt.js"
+import { assertDefined, first } from "./func.js"
+import Openai from "./openai/index.js"
+import OpenAI from "openai"
+import { ChatLogRecord } from "./openai/types.js"
 
 export const getChatId = (msg: MessageContext): string => {
     const getTopicId = (msg: MessageContext): number | undefined => {
@@ -44,7 +46,7 @@ export async function getMessagePhoto(tg: TelegramClient, msg: MessageContext) {
     }
 }
 
-export async function getMessageText(tg: TelegramClient, gpt: ChatGpt, upd: MessageContext) {
+export async function getMessageText(tg: TelegramClient, gpt: Openai.Gpt, upd: MessageContext) {
     if (upd.media?.type === 'voice') {
         const buffer = await tg.downloadAsBuffer(upd.media)
         return await gpt.transcribe(buffer)
@@ -54,3 +56,16 @@ export async function getMessageText(tg: TelegramClient, gpt: ChatGpt, upd: Mess
 }
 
 export const getUsername = (peer: Peer) => peer.username ?? undefined
+
+export function toChatLog(completion: OpenAI.Chat.Completions.ChatCompletion) {
+    const c = first(completion.choices)
+    const { role, content } = c.message
+    if (content) {
+        return {
+            map: (f: (x: ChatLogRecord) => void) => f({
+                role,
+                content,
+            })
+        }
+    }
+}
