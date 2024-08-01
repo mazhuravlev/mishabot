@@ -1,5 +1,5 @@
 import { UpdateFilter, MessageContext } from '@mtcute/dispatcher'
-import { Message, Peer, TelegramClient } from '@mtcute/node'
+import { Peer, TelegramClient } from '@mtcute/node'
 import { assertDefined, first } from './func.js'
 import Openai from './openai/index.js'
 import OpenAI from 'openai'
@@ -21,10 +21,6 @@ export const getChatId = (msg: MessageContext): string => {
     const topicId = getTopicId(msg)
     return topicId ? `${chatId}_${topicId}` : chatId.toFixed()
 }
-
-export const makeUpdateMessage =
-    (tg: TelegramClient) => (msg: Message) => (text?: string) =>
-        tg.editMessage({ chatId: msg.chat.id, message: msg.id, text })
 
 export const makeIsAllowedMsg: (
     tg: TelegramClient

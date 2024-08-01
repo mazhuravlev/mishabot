@@ -11,14 +11,18 @@ const usageCheckIntervalMinutes = 1
 const excerptTokenThreshold = 2000
 
 export class Gpt {
-    private _temperature = 1
     private _chatLog: ChatLogRecord[] = []
     private _systemRole: string
     private _openai: OpenAI
-    private _usage: OpenAI.Completions.CompletionUsage | undefined
+    private _usage: OpenAI.Completions.CompletionUsage = {
+        completion_tokens: 0,
+        prompt_tokens: 0,
+        total_tokens: 0,
+    }
     private _storage: LocalStorage
     private _excerptSubject = new Subject<OpenAI.Completions.CompletionUsage>()
     private _excerptIntervalId: NodeJS.Timeout
+    private _temperature = 1
 
     constructor(
         private _id: string,

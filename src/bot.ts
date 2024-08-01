@@ -1,6 +1,6 @@
 import { MessageContext } from '@mtcute/dispatcher'
 import Openai from './openai/index.js'
-import { assertDefined, assertNonEmptyString, first, last } from './func.js'
+import { assertDefined, first } from './func.js'
 import { TelegramClient } from '@mtcute/node'
 
 export const removeMention = (msg: string) =>
@@ -55,50 +55,4 @@ export async function getRepliedMessage(
     } else {
         return undefined
     }
-}
-
-const setRoleRegex = /^установи роль[^А-яA-z]*/iu
-const drawThisRegex = /^нарисуй это[^А-яA-z]*/iu
-const aspectRatioRegex = /\b(\d+\/\d+)\b/gu
-export const botStrings = {
-    status: {
-        test: (s: string) => /^статус/i.test(s),
-    },
-    setRole: {
-        test: (s: string) => setRoleRegex.test(s),
-        sanitize: (s: string) => s.replace(setRoleRegex, ''),
-    },
-    getRole: {
-        test: (s: string) => /^[А-я\w]+ роль/iu.test(s),
-    },
-    look: {
-        test: (s: string) => /^глянь\s*,?\s*/i.test(s),
-    },
-    draw: {
-        test: (s: string) => /^нарисуй/i.test(s),
-    },
-    drawThis: {
-        test: (s: string) => drawThisRegex.test(s),
-        sanitize: (s: string) => s.replace(drawThisRegex, ''),
-    },
-    speak: {
-        test: (s: string) => /^скажи/i.test(s),
-    },
-    aspectRatio: {
-        get: (s: string) => {
-            const aspectMatches = s.match(aspectRatioRegex)
-            if (aspectMatches) {
-                const [width, height] = last(aspectMatches).split('/')
-                assertNonEmptyString(width)
-                assertNonEmptyString(height)
-                return { width, height }
-            }
-        },
-        sanitize: (s: string) => s.replace(aspectRatioRegex, ''),
-    },
-    moderation: {
-        regex: /модерация\s+/,
-        test: (s: string) => botStrings.moderation.regex.test(s),
-        sanitize: (s: string) => s.replace(botStrings.moderation.regex, ''),
-    },
 }

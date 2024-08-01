@@ -37,7 +37,7 @@ export const assertNonEmptyString = (s: unknown) => {
  * @param s input string
  * @returns
  */
-export const cb = (s: string) => '```\n' + s + '```'
+export const cb = (s: string): string => '```\n' + s + '```'
 
 export const decode =
     <T>(type: t.Type<T>) =>

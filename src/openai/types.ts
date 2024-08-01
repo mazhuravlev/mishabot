@@ -22,14 +22,11 @@ export const storageType = t.type({
             }),
         ])
     ),
-    usage: t.union([
-        t.undefined,
-        t.type({
-            completion_tokens: t.number,
-            prompt_tokens: t.number,
-            total_tokens: t.number,
-        }),
-    ]),
+    usage: t.type({
+        completion_tokens: t.number,
+        prompt_tokens: t.number,
+        total_tokens: t.number,
+    }),
 })
 
 export interface ChatLogRecord {
