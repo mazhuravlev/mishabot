@@ -5,7 +5,7 @@ import Koa from 'koa'
 import serve from 'koa-static'
 import env from './env.js'
 import { decode } from './func.js'
-import { removeMention } from './bot.js'
+import Bot from './bot/index.js'
 import { getChatId, makeIsAllowedMsg, getMessageText } from './mtcute.js'
 import { Logger } from 'tslog'
 import { AppLogger } from './types.js'
@@ -13,16 +13,6 @@ import Openai from './openai/index.js'
 import Yandex from './yandex/index.js'
 import { readFile } from 'node:fs/promises'
 import { yandexKeyType } from './yandex/types.js'
-import {
-    BotCommand,
-    defaultCommand,
-    drawCommand,
-    lookCommand,
-    moderationCommand,
-    noopCommand,
-    roleCommand,
-    statusCommand,
-} from './commands.js'
 
 const log: AppLogger = new Logger()
 
@@ -102,17 +92,17 @@ dp.onNewMessage(isAllowedMsg, async (update: MessageContext) => {
         update.text
     )
     const gpt = getChatGpt(chatId)
-    const prompt = removeMention(await getMessageText(tg, gpt, update))
+    const prompt = Bot.removeMention(await getMessageText(tg, gpt, update))
     if (prompt === '') return
     const yandex = getYandexGpt(chatId)
     const botContext = { gpt, yandex, update, tg }
-    const commands: BotCommand[] = [
-        statusCommand,
-        roleCommand,
-        moderationCommand,
-        env.IMAGE_RECOGNITION ? lookCommand(staticUrl) : noopCommand,
-        drawCommand,
-        defaultCommand,
+    const commands: Bot.BotCommand[] = [
+        Bot.statusCommand,
+        Bot.roleCommand,
+        Bot.moderationCommand,
+        env.IMAGE_RECOGNITION ? Bot.lookCommand(staticUrl) : Bot.noopCommand,
+        Bot.drawCommand,
+        Bot.defaultCommand,
     ]
 
     for (const command of commands) {

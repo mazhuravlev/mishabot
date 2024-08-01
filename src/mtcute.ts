@@ -82,3 +82,26 @@ export function toChatLog(completion: OpenAI.Chat.Completions.ChatCompletion) {
         }
     }
 }
+
+export async function getRepliedMessage(
+    tg: TelegramClient,
+    upd: MessageContext,
+    includeBotMessage = false
+) {
+    if (upd.replyToMessage?.id) {
+        const originalMessage = assertDefined(
+            first(await tg.getMessages(upd.chat.id, [upd.replyToMessage.id]))
+        )
+        const includeMessage =
+            originalMessage.text &&
+            (includeBotMessage ||
+                originalMessage.sender.username !== (await tg.getMyUsername()))
+        if (includeMessage) {
+            return originalMessage
+        } else {
+            return undefined
+        }
+    } else {
+        return undefined
+    }
+}
