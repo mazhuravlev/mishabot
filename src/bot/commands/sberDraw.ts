@@ -9,9 +9,7 @@ export const sberDrawCommand: BotCommand =
             await tg.sendTyping(update.chat.id, 'typing')
             const completion = await sber.query(
                 prompt,
-                {
-                    function_call: 'auto',
-                },
+                { function_call: 'auto' },
                 true
             )
             const msg = first(completion.choices).message.content
