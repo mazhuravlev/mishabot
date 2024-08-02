@@ -4,7 +4,7 @@ import * as ngrok from 'ngrok'
 import Koa from 'koa'
 import serve from 'koa-static'
 import env from './env.js'
-import { decode } from './func.js'
+import { cb, decode } from './func.js'
 import Bot from './bot/index.js'
 import { getChatId, makeIsAllowedMsg, getMessageText } from './mtcute.js'
 import { Logger } from 'tslog'
@@ -15,6 +15,7 @@ import Sber from './sber/index.js'
 import { readFile } from 'node:fs/promises'
 import { yandexKeyType } from './yandex/types.js'
 import winCa from 'win-ca'
+import { SttResult } from './sber/types.js'
 
 winCa.inject('+')
 
@@ -111,10 +112,17 @@ dp.onNewMessage(isAllowedMsg, async (update: MessageContext) => {
     const gpt = getChatGpt(chatId)
     const yandex = getYandexGpt(chatId)
     const sber = getSberGpt(chatId)
+    let emotion: SttResult['emotions'][number] | undefined
     const messageText = await getMessageText(
         tg,
         update,
-        useSber ? (v) => sber.api.transcribe(v) : (v) => gpt.transcribe(v)
+        useSber
+            ? async (v) => {
+                  const result = await sber.api.transcribe(v)
+                  emotion = result.emotion
+                  return result.text
+              }
+            : (v) => gpt.transcribe(v)
     )
     const prompt = Bot.removeMention(messageText)
     if (prompt === '') return
@@ -125,15 +133,20 @@ dp.onNewMessage(isAllowedMsg, async (update: MessageContext) => {
         update.media?.type ?? 'none',
         update.text
     )
-
+    const formattedEmotion = emotion
+        ? cb(JSON.stringify(emotion, null, 4))
+        : undefined
     const botContext = { gpt, yandex, update, tg, sber }
     const commands: Bot.BotCommand[] = [
         Bot.statusCommand,
         Bot.roleCommand,
         Bot.moderationCommand,
+        Bot.sberReadCommand,
         env.IMAGE_RECOGNITION ? Bot.lookCommand(staticUrl) : Bot.noopCommand,
         useSber ? Bot.sberDrawCommand : Bot.yandexDrawCommand,
-        useSber ? Bot.sberDefaultCommand : Bot.defaultCommand,
+        useSber
+            ? Bot.sberDefaultCommand(formattedEmotion)
+            : Bot.defaultCommand(formattedEmotion),
     ]
 
     for (const command of commands) {

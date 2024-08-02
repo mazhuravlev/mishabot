@@ -61,5 +61,5 @@ type PartialConfig = Partial<Omit<CompletionConfig, 'messages'>>
 const defaultConfig: Omit<CompletionConfig, 'messages'> = {
     model: 'GigaChat',
     temperature: 0.5,
-    max_tokens: 1000,
+    max_tokens: 300,
 }

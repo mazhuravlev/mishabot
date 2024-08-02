@@ -1,7 +1,6 @@
 import { UpdateFilter, MessageContext } from '@mtcute/dispatcher'
 import { Peer, TelegramClient } from '@mtcute/node'
 import { assertDefined, first } from './func.js'
-import Openai from './openai/index.js'
 import OpenAI from 'openai'
 import { ChatLogRecord } from './openai/types.js'
 

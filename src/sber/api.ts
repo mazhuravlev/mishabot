@@ -88,7 +88,7 @@ export class Api {
         ).then((x) => x.arrayBuffer())
     }
 
-    public async transcribe(voice: Uint8Array): Promise<string> {
+    public async transcribe(voice: Uint8Array) {
         const json: unknown = await fetch(
             'https://smartspeech.sber.ru/rest/v1/speech:recognize',
             {
@@ -101,7 +101,20 @@ export class Api {
             }
         ).then((x) => x.json())
         const result = decode(sttResultType)(json)
-        return result.result.join(' ')
+        return {
+            text: result.result.join(' '),
+            emotion: {
+                negative:
+                    result.emotions.reduce((a, c) => a + c.negative, 0) /
+                    result.emotions.length,
+                neutral:
+                    result.emotions.reduce((a, c) => a + c.neutral, 0) /
+                    result.emotions.length,
+                positive:
+                    result.emotions.reduce((a, c) => a + c.positive, 0) /
+                    result.emotions.length,
+            },
+        }
     }
 
     private async getAccessToken(

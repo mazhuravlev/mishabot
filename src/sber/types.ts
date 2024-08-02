@@ -54,14 +54,14 @@ export interface CompletionConfig {
     update_interval?: number
 }
 
+const emotionType = t.type({
+    negative: t.number,
+    neutral: t.number,
+    positive: t.number,
+})
+export type SttResult = t.TypeOf<typeof sttResultType>
 export const sttResultType = t.type({
     result: t.array(t.string),
-    emotions: t.array(
-        t.type({
-            negative: t.number,
-            neutral: t.number,
-            positive: t.number,
-        })
-    ),
+    emotions: t.array(emotionType),
     status: t.number,
 })
