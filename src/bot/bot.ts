@@ -1,7 +1,9 @@
 import { BotCommand } from './types.js'
 
 export { defaultCommand } from './commands/default.js'
-export { drawCommand } from './commands/draw.js'
+export { sberDefaultCommand } from './commands/sberDefault.js'
+export { yandexDrawCommand } from './commands/yandexDraw.js'
+export { sberDrawCommand } from './commands/sberDraw.js'
 export { lookCommand } from './commands/look.js'
 export { moderationCommand } from './commands/moderation.js'
 export { roleCommand } from './commands/role.js'

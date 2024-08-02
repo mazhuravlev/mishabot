@@ -6,6 +6,13 @@ export const roleType = t.union([
     t.literal('user'),
 ])
 
+export type Usage = t.TypeOf<typeof usageType>
+export const usageType = t.type({
+    completion_tokens: t.number,
+    prompt_tokens: t.number,
+    total_tokens: t.number,
+})
+
 export type StorageType = t.TypeOf<typeof storageType>
 export const storageType = t.type({
     systemRole: t.string,
@@ -22,11 +29,7 @@ export const storageType = t.type({
             }),
         ])
     ),
-    usage: t.type({
-        completion_tokens: t.number,
-        prompt_tokens: t.number,
-        total_tokens: t.number,
-    }),
+    usage: usageType,
 })
 
 export interface ChatLogRecord {

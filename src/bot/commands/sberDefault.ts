@@ -1,22 +1,20 @@
 import { InputMedia, md } from '@mtcute/node'
 import { first } from '../../func.js'
-import { getUsername } from '../../mtcute.js'
 import { addRepliedMessageContext, makeFailureMessage } from '../func.js'
 import { BotCommand } from '../types.js'
 
-export const defaultCommand: BotCommand =
-    ({ tg, gpt, update }) =>
+export const sberDefaultCommand: BotCommand =
+    ({ tg, sber, update }) =>
     async (prompt) => {
         await tg.sendTyping(update.chat.id, 'typing')
-        await addRepliedMessageContext(tg, gpt, update)
-        const { content } = first(
-            (await gpt.query(prompt, getUsername(update.sender))).choices
-        ).message
+        await addRepliedMessageContext(tg, sber, update)
+        const completion = await sber.query(prompt, {}, true)
+        const { content } = first(completion.choices).message
         if (content) {
             if (/^скажи/i.test(prompt)) {
                 await tg.sendTyping(update.chat.id, 'typing')
                 const voice = InputMedia.voice(
-                    new Uint8Array(await gpt.speak(content))
+                    new Uint8Array(await sber.api.speak(content))
                 )
                 await update.replyMedia(voice)
             } else {

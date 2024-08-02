@@ -56,12 +56,12 @@ export async function getMessagePhoto(tg: TelegramClient, msg: MessageContext) {
 
 export async function getMessageText(
     tg: TelegramClient,
-    gpt: Openai.Gpt,
-    upd: MessageContext
+    upd: MessageContext,
+    transcribe: (buffer: Uint8Array) => Promise<string>
 ) {
     if (upd.media?.type === 'voice') {
         const buffer = await tg.downloadAsBuffer(upd.media)
-        return await gpt.transcribe(buffer)
+        return await transcribe(buffer)
     } else {
         return upd.text
     }

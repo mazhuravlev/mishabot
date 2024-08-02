@@ -134,7 +134,7 @@ export class Gpt {
         return r
     }
 
-    public async transcribe(buffer: Uint8Array) {
+    public async transcribe(buffer: Uint8Array): Promise<string> {
         const file = await toFile(buffer, 'voice.ogg')
         const { text } = await this._openai.audio.transcriptions.create({
             file,

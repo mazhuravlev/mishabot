@@ -7,7 +7,7 @@ export const moderationCommand: BotCommand =
     async (prompt) => {
         const regex = /модерация\s+/
         if (regex.test(prompt)) {
-            await update.answerText(
+            await update.replyText(
                 md(
                     cb(
                         JSON.stringify(

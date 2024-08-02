@@ -8,13 +8,13 @@ export const roleCommand: BotCommand =
             const role = prompt.replace(setRoleRegex, '')
             if (role) {
                 gpt.role = role
-                await update.answerText(role)
+                await update.replyText(role)
             } else {
-                await update.answerText('Какую роль установить?')
+                await update.replyText('Какую роль установить?')
             }
             return true
         } else if (/^[А-я\w]+ роль/iu.test(prompt)) {
-            await update.answerText(gpt.role)
+            await update.replyText(gpt.role)
             return true
         } else {
             return false

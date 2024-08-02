@@ -2,6 +2,7 @@ import { MessageContext } from '@mtcute/dispatcher'
 import { TelegramClient } from '@mtcute/node'
 import { getRepliedMessage, getUsername } from '../mtcute.js'
 import Openai from '../openai/index.js'
+import Sber from '../sber/index.js'
 
 export const removeMention = (msg: string) =>
     msg
@@ -15,7 +16,7 @@ export const makeFailureMessage = (e?: string) => {
 
 export async function addRepliedMessageContext(
     tg: TelegramClient,
-    gpt: Openai.Gpt,
+    gpt: Openai.Gpt | Sber.Gpt,
     ctx: MessageContext
 ) {
     const repliedMessage = await getRepliedMessage(tg, ctx)

@@ -1,17 +1,13 @@
 import { MessageContext } from '@mtcute/dispatcher'
 import { InputMedia } from '@mtcute/node'
-import {
-    assertDefined,
-    assertNonEmptyString,
-    last,
-    toError,
-} from '../../func.js'
+import { assertDefined, toError } from '../../func.js'
 import { getUsername, getRepliedMessage } from '../../mtcute.js'
 import Openai from '../../openai/index.js'
 import { makeFailureMessage } from '../func.js'
 import { BotCommand } from '../types.js'
+import { AspectRatio } from './aspectRatio.js'
 
-export const drawCommand: BotCommand =
+export const yandexDrawCommand: BotCommand =
     ({ tg, gpt, update, yandex }) =>
     async (prompt) => {
         if (/^нарисуй/i.test(prompt)) {
@@ -67,7 +63,7 @@ export const drawCommand: BotCommand =
                         gpt
                     )
                 } else {
-                    await update.answerText('Что именно требуется нарисовать?')
+                    await update.replyText('Что именно требуется нарисовать?')
                 }
             } else {
                 await doDraw(update, prompt, gpt)
@@ -77,25 +73,3 @@ export const drawCommand: BotCommand =
             return false
         }
     }
-
-class AspectRatio {
-    private _aspectRatioRegex = /\b(\d+\/\d+)\b/gu
-
-    constructor(private _str: string) {}
-
-    public get value() {
-        const aspectMatches = this._str.match(this._aspectRatioRegex)
-        if (aspectMatches) {
-            const [width, height] = last(aspectMatches).split('/')
-            assertNonEmptyString(width)
-            assertNonEmptyString(height)
-            return { width, height }
-        } else {
-            return { width: '1', height: '1' }
-        }
-    }
-
-    public get sanitized() {
-        return this._str.replace(this._aspectRatioRegex, '')
-    }
-}
